@@ -978,6 +978,51 @@ export function normalizeRoutePoints(points) {
   return normalized;
 }
 
+function orthogonalPolyline(points) {
+  return points.every((point, index) => {
+    if (index === 0) return true;
+    const previous = points[index - 1];
+    const dx = Math.abs(point[0] - previous[0]);
+    const dy = Math.abs(point[1] - previous[1]);
+    return (dx <= 0.0001) !== (dy <= 0.0001);
+  });
+}
+
+// Remove unnecessary bends from an orthogonal route without ever making it
+// worse: both endpoints stay fixed, the polyline stays orthogonal, and every
+// rewrite must pass the caller's accept predicate (clearance, endpoint-side
+// direction, rhythm floors, ...). Shortcuts are proposed in a fixed order, so
+// the result is independent of the route's history.
+export function simplifyRoutePoints(points, { accept } = {}) {
+  let current = normalizeRoutePoints(points);
+  if (current.length < 3 || typeof accept !== 'function') return current;
+  const accepted = (candidate) => {
+    const normalized = normalizeRoutePoints(candidate);
+    return normalized.length >= 2 && orthogonalPolyline(normalized) && accept(normalized);
+  };
+  const proposalsFor = (route) => {
+    const start = route[0];
+    const end = route.at(-1);
+    const shortcuts = [];
+    if (Math.abs(start[0] - end[0]) <= 0.0001 || Math.abs(start[1] - end[1]) <= 0.0001) {
+      shortcuts.push([start, end]);
+    }
+    shortcuts.push(
+      [start, [end[0], start[1]], end],
+      [start, [start[0], end[1]], end],
+    );
+    return shortcuts.filter((candidate) => candidate.length < route.length);
+  };
+  // Each accepted rewrite strictly drops points, so one pass per point bounds
+  // the loop; a full pass without an accepted rewrite ends it.
+  for (let remaining = current.length; remaining > 0; remaining -= 1) {
+    const proposal = proposalsFor(current).find((candidate) => accepted(candidate));
+    if (!proposal) break;
+    current = normalizeRoutePoints(proposal);
+  }
+  return current;
+}
+
 function pointRectDistance(point, rect) {
   const dx = Math.max(rect.x - point[0], 0, point[0] - (rect.x + rect.width));
   const dy = Math.max(rect.y - point[1], 0, point[1] - (rect.y + rect.height));

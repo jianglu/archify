@@ -31,6 +31,7 @@ import {
   defaultToSide,
   chosenSide,
   routeHonorsEndpointSides,
+  simplifyRoutePoints,
   polylinePath,
   roundedPath,
   labelPoint,
@@ -60,6 +61,49 @@ test('automaticPortRhythmBridge: near parallel ports use readable outside runs',
   assert.deepEqual(collectRouteRhythmIssues({
     routedRelations: [{ relation: { id: 'read' }, points }],
   }), []);
+});
+
+test('simplifyRoutePoints: collapses a dogleg to a single-bend route when accepted', () => {
+  const simplified = simplifyRoutePoints(
+    [[0, 0], [40, 0], [40, 40], [80, 40]],
+    { accept: () => true },
+  );
+  assert.deepEqual(simplified, [[0, 0], [80, 0], [80, 40]]);
+});
+
+test('simplifyRoutePoints: collapses to a straight line only when endpoints share an axis', () => {
+  assert.deepEqual(
+    simplifyRoutePoints([[10, 10], [50, 10], [90, 10]], { accept: () => true }),
+    [[10, 10], [90, 10]],
+  );
+  // A single-bend route is already minimal: the other corner is not shorter,
+  // so the route is returned as-is.
+  assert.deepEqual(
+    simplifyRoutePoints([[0, 0], [0, 40], [80, 40]], { accept: () => true }),
+    [[0, 0], [0, 40], [80, 40]],
+  );
+});
+
+test('simplifyRoutePoints: iterates — a staircase collapses to one bend in one pass', () => {
+  const simplified = simplifyRoutePoints(
+    [[0, 0], [40, 0], [40, 40], [80, 40], [80, 80]],
+    { accept: () => true },
+  );
+  assert.deepEqual(simplified, [[0, 0], [80, 0], [80, 80]]);
+});
+
+test('simplifyRoutePoints: keeps the original route when accept rejects every shortcut', () => {
+  const original = [[0, 0], [40, 0], [40, 40], [80, 40]];
+  const simplified = simplifyRoutePoints(original, { accept: () => false });
+  assert.deepEqual(simplified, original);
+  // Endpoints never move, whichever shortcut is taken.
+  const collapsed = simplifyRoutePoints(original, {
+    accept: (points) => points.length === 3,
+  });
+  assert.equal(collapsed[0][0], 0);
+  assert.equal(collapsed[0][1], 0);
+  assert.equal(collapsed.at(-1)[0], 80);
+  assert.equal(collapsed.at(-1)[1], 40);
 });
 
 test('rectsOverlap: separated rects do not overlap', () => {

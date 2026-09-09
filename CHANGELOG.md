@@ -6,6 +6,9 @@ All notable changes are documented here. Format loosely follows [Keep a Changelo
 
 > Development identity: `v2.17.0-dev.1`. Not a stable release.
 
+### Changed
+- **Bend-minimal automatic architecture routes.** The architecture auto router now proposes single-bend candidates before two-bend doglegs, gates every automatic candidate on the 8px/16px route-rhythm floors, and keeps the spread-port stub bridge as a fallback instead of the default shape. A new shared `simplifyRoutePoints` helper re-checks automatic routes for removable bends under the same accept predicates, while authored `via` geometry stays authoritative. Rendered output for bundled examples is byte-identical; the change hardens showcase compliance and locks the minimal-bend contract with new geometry and layout-rules tests.
+
 ### Fixed
 - **DSH plugin refresh.** Adapter 0.2.0 pins the current Archify development snapshot, includes the newer runtime and CLI fixes, and targets DSH 0.1.2-rc.1. Release metadata replaces the frozen 0.1.0 packaging source; the tarball uses the canonical clean-Skill stager and documents independent plugin upgrades.
 - **Machine-readable CLI argument failures (#330).** `validate --json` and `deliver --json` now keep invalid or missing option values, unknown options and diagram types, unsupported option combinations, and usage errors inside one versioned failure receipt on stdout. These failures use the `arguments` stage, stable diagnostic codes, and exit status 2, while human-mode stderr behavior remains unchanged.

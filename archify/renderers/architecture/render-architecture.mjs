@@ -32,6 +32,7 @@ import {
   chosenSide,
   routeHonorsEndpointSides,
   normalizeRoutePoints,
+  simplifyRoutePoints,
   polylinePath,
   routePointsValue,
   roundedPath,
@@ -808,6 +809,18 @@ function alignFacingPorts(conn, from, to, start, end, fromSide, toSide, ports) {
   return { start, end };
 }
 
+// Route-rhythm floors matching the shared composition gates: every segment
+// must clear the 8px micro-segment floor and interior segments the 16px
+// interior floor, so automatic candidates never ship a gate failure.
+function routeMeetsRhythmFloors(points) {
+  const segmentCount = points.length - 1;
+  return points.slice(0, -1).every((point, index) => {
+    const length = Math.abs(points[index + 1][0] - point[0]) + Math.abs(points[index + 1][1] - point[1]);
+    const interior = index > 0 && index < segmentCount - 1;
+    return length + 0.0001 >= (interior ? 16 : 8);
+  });
+}
+
 function routeVia(conn, from, to, start, end, fromSide, toSide) {
   if (conn.via) return conn.via;
   switch (conn.route || 'auto') {
@@ -828,13 +841,22 @@ function routeVia(conn, from, to, start, end, fromSide, toSide) {
       const deltaY = Math.abs(start[1] - end[1]);
       if ((deltaX < 4 || deltaY < 4) && routeHonorsEndpointSides([start, end], fromSide, toSide)) return [];
 
-      const rhythmBridge = automaticPortRhythmBridge(start, end, fromSide, toSide, {
-        accept: (points) => (
-          routeClearsEndpointComponents(points, from, to)
-          && routeClearsComponents(conn, points)
-        ),
-      });
-      if (rhythmBridge) return rhythmBridge.slice(1, -1);
+      // Prefer the fewest bends that still honors endpoint directions, keeps
+      // clear of components, and respects the 8px/16px route-rhythm floors the
+      // showcase gates enforce. The stub bridge stays a fallback for spread
+      // ports that no simpler candidate can serve, not the default shape.
+      const clearsCandidate = (points) => (
+        routeHonorsEndpointSides(points, fromSide, toSide)
+        && routeClearsEndpointComponents(points, from, to)
+        && routeClearsComponents(conn, points)
+        && routeMeetsRhythmFloors(points)
+      );
+
+      // Single-bend routes enter along the target's own axis, which mixed
+      // endpoint sides (e.g. right -> top) allow outright.
+      for (const corner of [[end[0], start[1]], [start[0], end[1]]]) {
+        if (clearsCandidate([start, corner, end])) return [corner];
+      }
 
       // Automatic port spreading can leave otherwise aligned endpoints only a
       // few pixels apart. A midpoint route would split that tiny difference
@@ -850,8 +872,7 @@ function routeVia(conn, from, to, start, end, fromSide, toSide) {
         ];
         for (const channelX of outsideChannels) {
           const candidate = [[channelX, start[1]], [channelX, end[1]]];
-          const points = [start, ...candidate, end];
-          if (routeHonorsEndpointSides(points, fromSide, toSide) && routeClearsComponents(conn, points)) return candidate;
+          if (clearsCandidate([start, ...candidate, end])) return candidate;
         }
       }
 
@@ -864,8 +885,7 @@ function routeVia(conn, from, to, start, end, fromSide, toSide) {
         ];
         for (const channelY of outsideChannels) {
           const candidate = [[start[0], channelY], [end[0], channelY]];
-          const points = [start, ...candidate, end];
-          if (routeHonorsEndpointSides(points, fromSide, toSide) && routeClearsComponents(conn, points)) return candidate;
+          if (clearsCandidate([start, ...candidate, end])) return candidate;
         }
       }
 
@@ -893,8 +913,18 @@ function routeVia(conn, from, to, start, end, fromSide, toSide) {
       ];
       for (const candidate of ordered) {
         const points = [start, ...candidate, end];
-        if (routeClearsEndpointComponents(points, from, to) && routeClearsComponents(conn, points)) return candidate;
+        if (routeClearsEndpointComponents(points, from, to)
+            && routeClearsComponents(conn, points)
+            && routeMeetsRhythmFloors(points)) return candidate;
       }
+
+      const rhythmBridge = automaticPortRhythmBridge(start, end, fromSide, toSide, {
+        accept: (points) => (
+          routeClearsEndpointComponents(points, from, to)
+          && routeClearsComponents(conn, points)
+        ),
+      });
+      if (rhythmBridge) return rhythmBridge.slice(1, -1);
 
       // Both bounded doglegs are blocked. Keep the best endpoint-safe route
       // when one exists so the universal Clean Flow gate reports the actual
@@ -940,7 +970,20 @@ function pathFor(conn) {
     toSide,
     ports,
   );
-  const points = [start, ...routeVia(conn, from, to, start, end, fromSide, toSide), end];
+  const isAutomaticRoute = !conn.via && (conn.route || 'auto') === 'auto';
+  let points = [start, ...routeVia(conn, from, to, start, end, fromSide, toSide), end];
+  if (isAutomaticRoute && points.length > 2) {
+    // Authored geometry is authoritative; only automatic routes get the
+    // unnecessary-bend simplification pass.
+    points = simplifyRoutePoints(points, {
+      accept: (candidate) => (
+        routeHonorsEndpointSides(candidate, fromSide, toSide)
+        && routeClearsEndpointComponents(candidate, from, to)
+        && routeClearsComponents(conn, candidate)
+        && routeMeetsRhythmFloors(candidate)
+      ),
+    });
+  }
   const routed = { d: roundedPath(points, 8), points };
   pathCache.set(conn, routed);
   return routed;

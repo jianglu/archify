@@ -1114,6 +1114,44 @@ test('architecture: auto route enters explicit top and bottom ports perpendicula
   assert.match(html, /data-composition-points="350,160;350,200;150,200;150,240"/);
 });
 
+test('architecture: mixed endpoint sides get a single-bend automatic route', () => {
+  const d = {
+    schema_version: 1,
+    diagram_type: 'architecture',
+    meta: { title: 'Single-bend auto route regression', quality_profile: 'showcase' },
+    components: [
+      { id: 'origin', type: 'backend', label: 'Origin', pos: [100, 20], size: [120, 60] },
+      { id: 'target', type: 'cloud', label: 'Target', pos: [400, 200], size: [120, 60] },
+    ],
+    connections: [
+      { id: 'mixed-sides', from: 'origin', to: 'target', fromSide: 'right', toSide: 'top' },
+    ],
+  };
+  const { code, stderr, outPath } = render('architecture', d);
+  assert.equal(code, 0, stderr);
+  const html = fs.readFileSync(outPath, 'utf8');
+  assert.match(html, /data-composition-points="220,50;460,50;460,200"/);
+});
+
+test('architecture: near-parallel authored sides keep a rhythm-clean stub bridge under showcase', () => {
+  const d = {
+    schema_version: 1,
+    diagram_type: 'architecture',
+    meta: { title: 'Near-parallel bridge regression', quality_profile: 'showcase' },
+    components: [
+      { id: 'origin', type: 'backend', label: 'Origin', pos: [100, 200], size: [120, 60] },
+      { id: 'target', type: 'cloud', label: 'Target', pos: [400, 205], size: [120, 60] },
+    ],
+    connections: [
+      { id: 'near-parallel', from: 'origin', to: 'target', fromSide: 'right', toSide: 'left' },
+    ],
+  };
+  const { code, stderr, outPath } = render('architecture', d);
+  assert.equal(code, 0, stderr);
+  const html = fs.readFileSync(outPath, 'utf8');
+  assert.match(html, /data-composition-points="220,230;244,230;244,251;376,251;376,235;400,235"/);
+});
+
 test('architecture: auto route preserves inferred side normals when the primary dogleg is blocked', () => {
   const d = {
     schema_version: 1,
