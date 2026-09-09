@@ -21,6 +21,7 @@ import {
   collectBorderRuns,
   cleanBorderRunProblems,
   collectRouteRhythmIssues,
+  routeMeetsRhythmFloors,
   cleanRouteRhythmProblems,
   routeBudgetMetrics,
   asArray,
@@ -517,6 +518,20 @@ test('route rhythm separates ordinary endpoint stubs from cramped turns and micr
     ['bad-turn', 'composition/short-interior-segment', 'interior', 9],
     ['micro-stub', 'composition/micro-segment', 'source-stub', 5],
   ]);
+});
+
+test('route rhythm exempts a short jog flanked by two long runs', () => {
+  // The 10px jog between 105px vertical runs reads as a deliberate port
+  // offset, not a cramped turn: a bidirectional pair with spread ports needs
+  // exactly this shape to route with two bends.
+  const jog = [[467, 160], [467, 280], [477, 280], [477, 400]];
+  assert.deepEqual(collectRouteRhythmIssues({
+    routedRelations: [{ relation: { id: 'pair-out' }, points: jog }],
+  }), []);
+  // A jog between short runs is still cramped, and a micro jog stays micro.
+  assert.equal(routeMeetsRhythmFloors([[0, 0], [30, 0], [30, 8], [60, 8]]), false);
+  assert.equal(routeMeetsRhythmFloors([[0, 0], [4, 0], [4, 200], [100, 200]]), false);
+  assert.equal(routeMeetsRhythmFloors(jog), true);
 });
 
 test('route rhythm is a showcase-only generation gate with actionable relationship identity', () => {

@@ -1152,6 +1152,30 @@ test('architecture: near-parallel authored sides keep a rhythm-clean stub bridge
   assert.match(html, /data-composition-points="220,230;244,230;244,251;376,251;376,235;400,235"/);
 });
 
+test('architecture: bidirectional spread pair routes as two-bend jogs instead of stub bridges', () => {
+  const d = {
+    schema_version: 1,
+    diagram_type: 'architecture',
+    meta: { title: 'Bidirectional spread pair regression', quality_profile: 'showcase' },
+    components: [
+      { id: 'alpha', type: 'backend', label: 'Alpha', pos: [400, 100], size: [120, 60] },
+      { id: 'beta', type: 'database', label: 'Beta', pos: [410, 400], size: [120, 60] },
+    ],
+    connections: [
+      { id: 'down', from: 'alpha', to: 'beta', fromSide: 'bottom', toSide: 'top' },
+      { id: 'up', from: 'beta', to: 'alpha', variant: 'dashed', fromSide: 'top', toSide: 'bottom' },
+    ],
+  };
+  const { code, stderr, outPath } = render('architecture', d);
+  assert.equal(code, 0, stderr);
+  const html = fs.readFileSync(outPath, 'utf8');
+  // Port spreading keeps distinct slots; the readable-jog rhythm exemption
+  // lets each edge take a two-bend Z instead of a six-point stub bridge.
+  assert.match(html, /data-composition-points="453,160;453,280;463,280;463,400"/);
+  assert.match(html, /data-composition-points="477,400;477,280;467,280;467,160"/);
+  assert.doesNotMatch(html, /data-composition-points="453,160;453,184;479,184/);
+});
+
 test('architecture: auto route preserves inferred side normals when the primary dogleg is blocked', () => {
   const d = {
     schema_version: 1,

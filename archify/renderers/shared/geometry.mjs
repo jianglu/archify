@@ -819,6 +819,33 @@ export function routeBudgetMetrics({
   };
 }
 
+// A short interior segment is a readable jog, not a cramped turn, when both
+// flanking runs are long (at least twice the interior floor): it reads as a
+// deliberate offset between two long parallel runs, like a bus offset. Dense
+// zigzags (short segments between short segments) stay flagged.
+function routeSegmentIsReadableJog(lengths, index, { interiorSegmentPx, microSegmentPx }) {
+  return lengths[index] + 0.0001 >= microSegmentPx
+    && lengths[index - 1] + 0.0001 >= interiorSegmentPx * 2
+    && lengths[index + 1] + 0.0001 >= interiorSegmentPx * 2;
+}
+
+// Route-rhythm floors shared by the automatic routers: every segment must
+// clear the micro-segment floor, interior segments the interior floor, with
+// the readable-jog exemption above.
+export function routeMeetsRhythmFloors(points, { interiorSegmentPx = 16, microSegmentPx = 8 } = {}) {
+  if (!Array.isArray(points) || points.length < 2) return false;
+  const lengths = points.slice(0, -1).map((point, index) => (
+    Math.abs(points[index + 1][0] - point[0]) + Math.abs(points[index + 1][1] - point[1])
+  ));
+  const segmentCount = lengths.length;
+  return lengths.every((length, index) => {
+    const interior = index > 0 && index < segmentCount - 1;
+    if (!interior) return length + 0.0001 >= microSegmentPx;
+    if (length + 0.0001 >= interiorSegmentPx) return true;
+    return routeSegmentIsReadableJog(lengths, index, { interiorSegmentPx, microSegmentPx });
+  });
+}
+
 export function collectRouteRhythmIssues({
   routedRelations,
   interiorSegmentPx = 16,
@@ -828,15 +855,20 @@ export function collectRouteRhythmIssues({
   for (const [fallbackIndex, routed] of asArray(routedRelations).entries()) {
     const points = normalizeRoutePoints(routed?.points);
     if (points.length < 2) continue;
+    const lengths = points.slice(0, -1).map((point, index) => (
+      Math.abs(points[index + 1][0] - point[0]) + Math.abs(points[index + 1][1] - point[1])
+    ));
     for (let segmentIndex = 0; segmentIndex < points.length - 1; segmentIndex += 1) {
       const start = points[segmentIndex];
       const end = points[segmentIndex + 1];
-      const length = Math.abs(end[0] - start[0]) + Math.abs(end[1] - start[1]);
+      const length = lengths[segmentIndex];
       if (length <= 0.0001) continue;
       const position = segmentPosition(segmentIndex, points.length - 1);
       const code = length < microSegmentPx - 0.0001
         ? 'composition/micro-segment'
-        : position === 'interior' && length < interiorSegmentPx - 0.0001
+        : position === 'interior'
+          && length < interiorSegmentPx - 0.0001
+          && !routeSegmentIsReadableJog(lengths, segmentIndex, { interiorSegmentPx, microSegmentPx })
           ? 'composition/short-interior-segment'
           : null;
       if (!code) continue;

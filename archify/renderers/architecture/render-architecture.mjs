@@ -32,6 +32,7 @@ import {
   chosenSide,
   routeHonorsEndpointSides,
   normalizeRoutePoints,
+  routeMeetsRhythmFloors,
   simplifyRoutePoints,
   polylinePath,
   routePointsValue,
@@ -809,18 +810,6 @@ function alignFacingPorts(conn, from, to, start, end, fromSide, toSide, ports) {
   return { start, end };
 }
 
-// Route-rhythm floors matching the shared composition gates: every segment
-// must clear the 8px micro-segment floor and interior segments the 16px
-// interior floor, so automatic candidates never ship a gate failure.
-function routeMeetsRhythmFloors(points) {
-  const segmentCount = points.length - 1;
-  return points.slice(0, -1).every((point, index) => {
-    const length = Math.abs(points[index + 1][0] - point[0]) + Math.abs(points[index + 1][1] - point[1]);
-    const interior = index > 0 && index < segmentCount - 1;
-    return length + 0.0001 >= (interior ? 16 : 8);
-  });
-}
-
 function routeVia(conn, from, to, start, end, fromSide, toSide) {
   if (conn.via) return conn.via;
   switch (conn.route || 'auto') {
@@ -898,17 +887,12 @@ function routeVia(conn, from, to, start, end, fromSide, toSide) {
         routeHonorsEndpointSides([start, ...candidate, end], fromSide, toSide)
       ));
       const sideAware = sideAwareBridgeCandidates(start, end, fromSide, toSide);
-      const nearParallelPorts = (
-        ((fromSide === 'top' || fromSide === 'bottom')
-          && (toSide === 'top' || toSide === 'bottom')
-          && deltaX < minimumStub * 2)
-        || ((fromSide === 'left' || fromSide === 'right')
-          && (toSide === 'left' || toSide === 'right')
-          && deltaY < minimumStub * 2)
-      );
+      // Cramped doglegs are rejected by the rhythm floors above (including the
+      // readable-jog exemption), so the plain side-safe candidates — which
+      // carry fewer bends than the stub bridges — always get first refusal.
       const ordered = [
-        ...(nearParallelPorts ? sideAware : sideSafe),
-        ...(nearParallelPorts ? sideSafe : sideAware),
+        ...sideSafe,
+        ...sideAware,
         ...candidates.filter((candidate) => !sideSafe.includes(candidate)),
       ];
       for (const candidate of ordered) {
