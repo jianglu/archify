@@ -415,7 +415,7 @@ test('render output check: endpoint stubs from 8px pass while cramped interior t
   assert.equal(clean.result.composition.metrics.shortInteriorSegmentCount, 0);
 
   const standard = checkHtml('short-turn-standard', `
-    <path data-edge-id="tight" data-edge-from="a" data-edge-to="b" data-composition-points="0,20;24,20;24,29;80,29" d="M 0 20 L 24 20 L 24 29 L 80 29" class="a-default" marker-end="url(#arrowhead)"/>
+    <path data-edge-id="tight" data-edge-from="a" data-edge-to="b" data-composition-points="0,20;24,20;24,29;80,29;80,60" d="M 0 20 L 24 20 L 24 29 L 80 29 L 80 60" class="a-default" marker-end="url(#arrowhead)"/>
   `, 'standard');
   assert.equal(standard.code, 0);
   assert.deepEqual(standard.result.composition.summary, { errors: 0, warnings: 1 });
@@ -423,13 +423,21 @@ test('render output check: endpoint stubs from 8px pass while cramped interior t
   assert.equal(standard.result.checks.find((item) => item.name === 'route_rhythm').ok, true);
 
   const showcase = checkHtml('short-turn-showcase', `
-    <path data-edge-id="tight" data-edge-from="a" data-edge-to="b" data-composition-points="0,20;24,20;24,29;80,29" d="M 0 20 L 24 20 L 24 29 L 80 29" class="a-default" marker-end="url(#arrowhead)"/>
+    <path data-edge-id="tight" data-edge-from="a" data-edge-to="b" data-composition-points="0,20;24,20;24,29;80,29;80,60" d="M 0 20 L 24 20 L 24 29 L 80 29 L 80 60" class="a-default" marker-end="url(#arrowhead)"/>
   `, 'showcase');
   assert.notEqual(showcase.code, 0);
   assert.deepEqual(showcase.result.composition.summary, { errors: 1, warnings: 0 });
   const rhythm = showcase.result.checks.find((item) => item.name === 'route_rhythm');
   assert.equal(rhythm.ok, false);
   assert.match(rhythm.details[0], /\[composition\/short-interior-segment\] showcase relationship id "tight"/);
+
+  // A three-segment endpoint jog (facing ports offset by a few px inside a
+  // narrow channel) is exempt: the middle segment IS the port miss.
+  const endpointJog = checkHtml('endpoint-jog', `
+    <path data-edge-id="offset" data-edge-from="a" data-edge-to="b" data-composition-points="430,171;415,171;415,173;400,173" d="M 430 171 L 415 171 L 415 173 L 400 173" class="a-default" marker-end="url(#arrowhead)"/>
+  `, 'showcase');
+  assert.equal(endpointJog.code, 0);
+  assert.deepEqual(endpointJog.result.composition.summary, { errors: 0, warnings: 0 });
 });
 
 process.on('exit', () => fs.rmSync(tmp, { recursive: true, force: true }));

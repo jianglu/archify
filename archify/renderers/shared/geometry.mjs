@@ -829,9 +829,22 @@ function routeSegmentIsReadableJog(lengths, index, { interiorSegmentPx, microSeg
     && lengths[index + 1] + 0.0001 >= interiorSegmentPx * 2;
 }
 
+// A three-segment route is two port stubs joined by the axis change itself.
+// When facing ports miss each other by a few pixels inside a narrow channel,
+// that miss IS the middle segment — no orthogonal route can avoid it, and
+// manufacturing a multi-bend detour around it only adds noise. Exempt the
+// middle segment from both floors as long as both stubs still clear the
+// micro floor.
+function routeSegmentIsEndpointJog(lengths, index, { microSegmentPx }) {
+  return lengths.length === 3
+    && index === 1
+    && lengths[0] + 0.0001 >= microSegmentPx
+    && lengths[2] + 0.0001 >= microSegmentPx;
+}
+
 // Route-rhythm floors shared by the automatic routers: every segment must
 // clear the micro-segment floor, interior segments the interior floor, with
-// the readable-jog exemption above.
+// the readable-jog and endpoint-jog exemptions above.
 export function routeMeetsRhythmFloors(points, { interiorSegmentPx = 16, microSegmentPx = 8 } = {}) {
   if (!Array.isArray(points) || points.length < 2) return false;
   const lengths = points.slice(0, -1).map((point, index) => (
@@ -842,7 +855,8 @@ export function routeMeetsRhythmFloors(points, { interiorSegmentPx = 16, microSe
     const interior = index > 0 && index < segmentCount - 1;
     if (!interior) return length + 0.0001 >= microSegmentPx;
     if (length + 0.0001 >= interiorSegmentPx) return true;
-    return routeSegmentIsReadableJog(lengths, index, { interiorSegmentPx, microSegmentPx });
+    return routeSegmentIsReadableJog(lengths, index, { interiorSegmentPx, microSegmentPx })
+      || routeSegmentIsEndpointJog(lengths, index, { microSegmentPx });
   });
 }
 
@@ -864,11 +878,13 @@ export function collectRouteRhythmIssues({
       const length = lengths[segmentIndex];
       if (length <= 0.0001) continue;
       const position = segmentPosition(segmentIndex, points.length - 1);
+      const endpointJog = routeSegmentIsEndpointJog(lengths, segmentIndex, { microSegmentPx });
       const code = length < microSegmentPx - 0.0001
-        ? 'composition/micro-segment'
+        ? (endpointJog ? null : 'composition/micro-segment')
         : position === 'interior'
           && length < interiorSegmentPx - 0.0001
           && !routeSegmentIsReadableJog(lengths, segmentIndex, { interiorSegmentPx, microSegmentPx })
+          && !endpointJog
           ? 'composition/short-interior-segment'
           : null;
       if (!code) continue;
@@ -1018,6 +1034,44 @@ function orthogonalPolyline(points) {
     const dy = Math.abs(point[1] - previous[1]);
     return (dx <= 0.0001) !== (dy <= 0.0001);
   });
+}
+
+function orientationSign(a, b, p) {
+  const cross = (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]);
+  if (cross > 0.0001) return 1;
+  if (cross < -0.0001) return -1;
+  return 0;
+}
+
+function pointInSegmentBox(a, b, p) {
+  return p[0] >= Math.min(a[0], b[0]) - 0.0001 && p[0] <= Math.max(a[0], b[0]) + 0.0001
+    && p[1] >= Math.min(a[1], b[1]) - 0.0001 && p[1] <= Math.max(a[1], b[1]) + 0.0001;
+}
+
+function segmentsMeet(a, b, c, d) {
+  const o1 = orientationSign(a, b, c);
+  const o2 = orientationSign(a, b, d);
+  const o3 = orientationSign(c, d, a);
+  const o4 = orientationSign(c, d, b);
+  if (o1 !== o2 && o3 !== o4) return true;
+  if (o1 === 0 && pointInSegmentBox(a, b, c)) return true;
+  if (o2 === 0 && pointInSegmentBox(a, b, d)) return true;
+  if (o3 === 0 && pointInSegmentBox(c, d, a)) return true;
+  if (o4 === 0 && pointInSegmentBox(c, d, b)) return true;
+  return false;
+}
+
+// A route may fold back only when the fold clears the earlier runs entirely.
+// When it crosses or overlays itself, the 8px corner rounding renders the
+// crossing as a visible loop, so routers must reject such candidates.
+export function routeSelfIntersects(points) {
+  const normalized = normalizeRoutePoints(points);
+  for (let i = 0; i < normalized.length - 1; i += 1) {
+    for (let j = i + 2; j < normalized.length - 1; j += 1) {
+      if (segmentsMeet(normalized[i], normalized[i + 1], normalized[j], normalized[j + 1])) return true;
+    }
+  }
+  return false;
 }
 
 // Remove unnecessary bends from an orthogonal route without ever making it
@@ -1280,6 +1334,7 @@ export function automaticPortRhythmBridge(
     .map((points) => normalizeRoutePoints(points))
     .find((points) => (
       routeHonorsEndpointSides(points, fromSide, toSide)
+      && !routeSelfIntersects(points)
       && collectRouteRhythmIssues({ routedRelations: [{ points }], interiorSegmentPx }).length === 0
       && (typeof accept !== 'function' || accept(points))
     )) || null;

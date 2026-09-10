@@ -32,6 +32,7 @@ import {
   defaultToSide,
   chosenSide,
   routeHonorsEndpointSides,
+  routeSelfIntersects,
   simplifyRoutePoints,
   polylinePath,
   roundedPath,
@@ -510,7 +511,7 @@ test('route rhythm separates ordinary endpoint stubs from cramped turns and micr
   const issues = collectRouteRhythmIssues({
     routedRelations: [
       { relation: { id: 'lane-hop', from: 'a', to: 'b' }, points: [[0, 0], [13, 0], [13, 40], [80, 40], [80, 53]] },
-      { relation: { id: 'bad-turn', from: 'c', to: 'd' }, points: [[0, 80], [24, 80], [24, 89], [60, 89]] },
+      { relation: { id: 'bad-turn', from: 'c', to: 'd' }, points: [[0, 80], [24, 80], [24, 89], [60, 89], [60, 120]] },
       { relation: { id: 'micro-stub', from: 'e', to: 'f' }, points: [[0, 120], [5, 120], [5, 180]] },
     ],
   });
@@ -529,9 +530,42 @@ test('route rhythm exempts a short jog flanked by two long runs', () => {
     routedRelations: [{ relation: { id: 'pair-out' }, points: jog }],
   }), []);
   // A jog between short runs is still cramped, and a micro jog stays micro.
-  assert.equal(routeMeetsRhythmFloors([[0, 0], [30, 0], [30, 8], [60, 8]]), false);
+  assert.equal(routeMeetsRhythmFloors([[0, 0], [30, 0], [30, 8], [60, 8], [60, 40]]), false);
   assert.equal(routeMeetsRhythmFloors([[0, 0], [4, 0], [4, 200], [100, 200]]), false);
   assert.equal(routeMeetsRhythmFloors(jog), true);
+});
+
+test('route rhythm exempts the middle segment of a three-segment endpoint jog', () => {
+  // Two facing ports that miss each other by 2px inside a narrow channel:
+  // the middle segment IS the miss, and the earlier multi-bend detour
+  // rendered as a self-crossing loop, so the subtle Z is the correct shape.
+  const offset = [[430, 171], [415, 171], [415, 173], [400, 173]];
+  assert.equal(routeMeetsRhythmFloors(offset), true);
+  assert.deepEqual(collectRouteRhythmIssues({
+    routedRelations: [{ relation: { id: 'narrow' }, points: offset }],
+  }), []);
+  // Both stubs must still clear the micro floor for the exemption to apply.
+  assert.equal(routeMeetsRhythmFloors([[0, 0], [5, 0], [5, 8], [60, 8]]), false);
+});
+
+test('routeSelfIntersects rejects folding routes that cross their own runs', () => {
+  // The regression shape: a rhythm-bridge detour whose return run crossed
+  // its own exit stub — every segment was individually rhythm-clean, yet
+  // the 8px corner rounding rendered the crossing as a visible loop.
+  assert.equal(routeSelfIntersects([
+    [430, 171], [406, 171], [406, 189], [424, 189], [424, 173], [400, 173],
+  ]), true);
+  // Legal shapes: straight runs, simple Z jogs, and the wide-gap stub
+  // bridge whose detour stays clear of the exit and approach runs.
+  assert.equal(routeSelfIntersects([[0, 0], [100, 0]]), false);
+  assert.equal(routeSelfIntersects([[430, 171], [415, 171], [415, 173], [400, 173]]), false);
+  assert.equal(routeSelfIntersects([
+    [220, 230], [244, 230], [244, 251], [376, 251], [376, 235], [400, 235],
+  ]), false);
+  // Exact self-touch degenerates to a crossing too.
+  assert.equal(routeSelfIntersects([
+    [0, 0], [40, 0], [40, 20], [60, 20], [60, 0], [20, 0],
+  ]), true);
 });
 
 test('route rhythm is a showcase-only generation gate with actionable relationship identity', () => {

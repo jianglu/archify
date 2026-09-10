@@ -1133,7 +1133,7 @@ test('architecture: mixed endpoint sides get a single-bend automatic route', () 
   assert.match(html, /data-composition-points="220,50;460,50;460,200"/);
 });
 
-test('architecture: near-parallel authored sides keep a rhythm-clean stub bridge under showcase', () => {
+test('architecture: near-parallel facing ports route as a single mid-channel jog under showcase', () => {
   const d = {
     schema_version: 1,
     diagram_type: 'architecture',
@@ -1149,7 +1149,35 @@ test('architecture: near-parallel authored sides keep a rhythm-clean stub bridge
   const { code, stderr, outPath } = render('architecture', d);
   assert.equal(code, 0, stderr);
   const html = fs.readFileSync(outPath, 'utf8');
-  assert.match(html, /data-composition-points="220,230;244,230;244,251;376,251;376,235;400,235"/);
+  // The 5px port offset rides in the middle of the Z; the older six-point
+  // stub bridge spent two extra bends detouring below the channel.
+  assert.match(html, /data-composition-points="220,230;310,230;310,235;400,235"/);
+  assert.doesNotMatch(html, /data-composition-points="220,230;244,230;244,251;/);
+});
+
+test('architecture: narrow facing channel with a 2px port offset routes as a micro jog, not a self-crossing loop', () => {
+  const d = {
+    schema_version: 1,
+    diagram_type: 'architecture',
+    meta: { title: 'Narrow channel micro jog regression', quality_profile: 'showcase' },
+    components: [
+      { id: 'kvm', type: 'backend', label: 'WebRTC KVM', pos: [250, 140], size: [150, 66] },
+      { id: 'capture', type: 'backend', label: 'Capture', pos: [430, 140], size: [150, 62] },
+    ],
+    connections: [
+      // labelAt keeps port alignment off (authored label geometry), exactly
+      // like the real arkkvm diagram that produced the loop.
+      { id: 'encoded-frames', from: 'capture', to: 'kvm', labelAt: [415, 125] },
+    ],
+  };
+  const { code, stderr, outPath } = render('architecture', d);
+  assert.equal(code, 0, stderr);
+  const html = fs.readFileSync(outPath, 'utf8');
+  // 30px gap, ports at y=171 vs y=173: the subtle two-bend Z renders as a
+  // near-straight line under the 8px corner rounding. The rhythm-bridge
+  // detour used to fold back on itself here and draw a visible loop.
+  assert.match(html, /data-composition-points="430,171;415,171;415,173;400,173"/);
+  assert.doesNotMatch(html, /data-composition-points="430,171;406,171;/);
 });
 
 test('architecture: bidirectional spread pair routes as two-bend jogs instead of stub bridges', () => {

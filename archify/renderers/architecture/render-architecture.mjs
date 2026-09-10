@@ -33,6 +33,7 @@ import {
   routeHonorsEndpointSides,
   normalizeRoutePoints,
   routeMeetsRhythmFloors,
+  routeSelfIntersects,
   simplifyRoutePoints,
   polylinePath,
   routePointsValue,
@@ -938,6 +939,7 @@ function routeVia(conn, from, to, start, end, fromSide, toSide) {
         && routeClearsEndpointComponents(points, from, to)
         && routeClearsComponents(conn, points)
         && routeMeetsRhythmFloors(points)
+        && !routeSelfIntersects(points)
       );
 
       // Single-bend routes enter along the target's own axis, which mixed
@@ -998,13 +1000,15 @@ function routeVia(conn, from, to, start, end, fromSide, toSide) {
         const points = [start, ...candidate, end];
         if (routeClearsEndpointComponents(points, from, to)
             && routeClearsComponents(conn, points)
-            && routeMeetsRhythmFloors(points)) return candidate;
+            && routeMeetsRhythmFloors(points)
+            && !routeSelfIntersects(points)) return candidate;
       }
 
       const rhythmBridge = automaticPortRhythmBridge(start, end, fromSide, toSide, {
         accept: (points) => (
           routeClearsEndpointComponents(points, from, to)
           && routeClearsComponents(conn, points)
+          && !routeSelfIntersects(points)
         ),
       });
       if (rhythmBridge) return rhythmBridge.slice(1, -1);
@@ -1012,8 +1016,11 @@ function routeVia(conn, from, to, start, end, fromSide, toSide) {
       // Both bounded doglegs are blocked. Keep the best endpoint-safe route
       // when one exists so the universal Clean Flow gate reports the actual
       // obstacle; otherwise preserve the historical deterministic fallback
-      // and let the endpoint-direction gate explain the side mismatch.
-      return sideSafe[0] || sideAware[0] || horizontalFirst;
+      // and let the endpoint-direction gate explain the side mismatch. A
+      // self-crossing fallback would render as a loop, so skip those too.
+      const fallbacks = [...sideSafe, ...sideAware, horizontalFirst];
+      return fallbacks.find((candidate) => !routeSelfIntersects([start, ...candidate, end]))
+        || horizontalFirst;
     }
   }
 }
@@ -1064,6 +1071,7 @@ function pathFor(conn) {
         && routeClearsEndpointComponents(candidate, from, to)
         && routeClearsComponents(conn, candidate)
         && routeMeetsRhythmFloors(candidate)
+        && !routeSelfIntersects(candidate)
       ),
     });
   }
