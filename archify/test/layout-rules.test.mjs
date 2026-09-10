@@ -1224,7 +1224,7 @@ function renderWithAdvisoryPayload(doc) {
     input,
     outPath,
   ], { stdio: ['ignore', 'ignore', 'pipe'], encoding: 'utf8', env: { ...process.env, ARCHIFY_DIAGNOSTIC_FORMAT: 'json' } });
-  return { code: result.status ?? 1, advisories: parseAdvisoryPayload(result.stderr) };
+  return { code: result.status ?? 1, advisories: parseAdvisoryPayload(result.stderr), outPath };
 }
 
 test('architecture: alignment advisories name the exact move that straightens a bent connection', () => {
@@ -1261,12 +1261,30 @@ test('architecture: straight and spread connections produce no alignment advisor
   assert.equal(straight.code, 0);
   assert.deepEqual(straight.advisories, []);
 
-  // A spread bidirectional pair keeps distinct ports; alignment cannot
-  // straighten it and must not suggest moving either node.
-  const spread = renderWithAdvisoryPayload({
+  // A column-aligned spread pair already runs as two parallel straight
+  // segments, so no advisory may fire.
+  const alignedSpread = renderWithAdvisoryPayload({
     schema_version: 1,
     diagram_type: 'architecture',
     meta: { title: 'Spread pair advisory', quality_profile: 'showcase' },
+    components: [
+      { id: 'alpha', type: 'backend', label: 'Alpha', pos: [400, 100], size: [120, 60] },
+      { id: 'beta', type: 'database', label: 'Beta', pos: [400, 400], size: [120, 60] },
+    ],
+    connections: [
+      { id: 'down', from: 'alpha', to: 'beta', fromSide: 'bottom', toSide: 'top' },
+      { id: 'up', from: 'beta', to: 'alpha', variant: 'dashed', fromSide: 'top', toSide: 'bottom' },
+    ],
+  });
+  assert.equal(alignedSpread.code, 0);
+  assert.deepEqual(alignedSpread.advisories, []);
+});
+
+test('architecture: a misaligned spread pair gets one deduplicated axis-alignment advisory', () => {
+  const { code, advisories } = renderWithAdvisoryPayload({
+    schema_version: 1,
+    diagram_type: 'architecture',
+    meta: { title: 'Spread pair misaligned', quality_profile: 'showcase' },
     components: [
       { id: 'alpha', type: 'backend', label: 'Alpha', pos: [400, 100], size: [120, 60] },
       { id: 'beta', type: 'database', label: 'Beta', pos: [410, 400], size: [120, 60] },
@@ -1276,8 +1294,35 @@ test('architecture: straight and spread connections produce no alignment advisor
       { id: 'up', from: 'beta', to: 'alpha', variant: 'dashed', fromSide: 'top', toSide: 'bottom' },
     ],
   });
-  assert.equal(spread.code, 0);
-  assert.deepEqual(spread.advisories, []);
+  assert.equal(code, 0);
+  assert.equal(advisories.length, 1);
+  const advisory = advisories[0];
+  assert.equal(advisory.code, 'layout/alignable-bend');
+  assert.deepEqual(advisory.evidence.suggestedPos, [400, 400]);
+  assert.equal(advisory.evidence.spreadPair, true);
+  assert.match(advisory.message, /move "beta" pos to \[400, 400\] directly below "alpha"/);
+  assert.match(advisory.message, /both spread edges between "alpha" and "beta" run as parallel straight segments/);
+  // Applying the advisory straightens both edges into parallel lines.
+  const applied = JSON.parse(JSON.stringify({
+    schema_version: 1,
+    diagram_type: 'architecture',
+    meta: { title: 'Spread pair misaligned', quality_profile: 'showcase' },
+    components: [
+      { id: 'alpha', type: 'backend', label: 'Alpha', pos: [400, 100], size: [120, 60] },
+      { id: 'beta', type: 'database', label: 'Beta', pos: [410, 400], size: [120, 60] },
+    ],
+    connections: [
+      { id: 'down', from: 'alpha', to: 'beta', fromSide: 'bottom', toSide: 'top' },
+      { id: 'up', from: 'beta', to: 'alpha', variant: 'dashed', fromSide: 'top', toSide: 'bottom' },
+    ],
+  }));
+  applied.components[1].pos = [400, 400];
+  const straightened = renderWithAdvisoryPayload(applied);
+  assert.equal(straightened.code, 0);
+  assert.deepEqual(straightened.advisories, []);
+  const html = fs.readFileSync(straightened.outPath, 'utf8');
+  assert.match(html, /data-composition-points="453,160;453,400"/);
+  assert.match(html, /data-composition-points="467,400;467,160"/);
 });
 
 test('architecture: validate --json surfaces renderer alignment advisories', () => {

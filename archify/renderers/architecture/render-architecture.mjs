@@ -1016,6 +1016,34 @@ function alignmentMoveIsClear(mover, pos) {
   return true;
 }
 
+// A spread pair can still straighten: when the two nodes' anchor axes
+// coincide, the spread slots are co-ordered on both sides, so every edge of
+// the pair becomes one parallel straight line. Require both spread groups to
+// contain only edges between these two nodes, otherwise the move disturbs
+// relationships to other nodes.
+function spreadPairAxis(conn, from, to, connections) {
+  const { fromSide, toSide } = connectionSides(conn);
+  const verticalPair = (fromSide === 'bottom' && toSide === 'top')
+    || (fromSide === 'top' && toSide === 'bottom');
+  const horizontalPair = (fromSide === 'right' && toSide === 'left')
+    || (fromSide === 'left' && toSide === 'right');
+  if (!verticalPair && !horizontalPair) return null;
+  const isPairEdge = (other) => (
+    (other.from === from.id && other.to === to.id)
+    || (other.from === to.id && other.to === from.id)
+  );
+  const isEligible = (other) => !other.via && (!other.route || other.route === 'auto');
+  const groupIsPairOnly = (nodeId, side) => connections.every((other) => {
+    if (!isEligible(other)) return true;
+    const sides = connectionSides(other);
+    const touches = (other.from === nodeId && sides.fromSide === side)
+      || (other.to === nodeId && sides.toSide === side);
+    return !touches || isPairEdge(other);
+  });
+  if (!groupIsPairOnly(from.id, fromSide) || !groupIsPairOnly(to.id, toSide)) return null;
+  return { axis: verticalPair ? 'column' : 'row', fromSide, toSide };
+}
+
 function alignmentBendAdvisories() {
   const connections = asArray(arch.connections);
   const advisories = [];
@@ -1026,22 +1054,31 @@ function alignmentBendAdvisories() {
       connectionCounts.set(id, (connectionCounts.get(id) || 0) + 1);
     }
   }
+  const emittedSpreadPairs = new Set();
   for (const [index, conn] of connections.entries()) {
     if (conn.via || (conn.route && conn.route !== 'auto')) continue;
-    if (automaticPorts.get(conn)) continue;
     const from = components.get(conn.from);
     const to = components.get(conn.to);
     if (!from || !to) continue;
     const bends = Math.max(0, pathFor(conn).points.length - 2);
     if (bends < 1) continue;
+    let spreadPair = null;
+    if (automaticPorts.get(conn)) {
+      spreadPair = spreadPairAxis(conn, from, to, connections);
+      if (!spreadPair) continue;
+      const pairKey = [from.id, to.id].sort().join('\u0000') + spreadPair.axis;
+      if (emittedSpreadPairs.has(pairKey)) continue;
+      emittedSpreadPairs.add(pairKey);
+    }
     // Prefer moving the endpoint with fewer relationships, then the fixed
-    // candidate order, so the suggestion is deterministic.
+    // candidate order, so the suggestion is deterministic. A spread pair may
+    // only move along the axis its sides face.
     const rawMoves = [
       { mover: to, axis: 'column', delta: from.cx - to.cx, pos: [from.cx - to.width / 2, to.y] },
       { mover: to, axis: 'row', delta: from.cy - to.cy, pos: [to.x, from.cy - to.height / 2] },
       { mover: from, axis: 'column', delta: to.cx - from.cx, pos: [to.cx - from.width / 2, from.y] },
       { mover: from, axis: 'row', delta: to.cy - from.cy, pos: [from.x, to.cy - from.height / 2] },
-    ];
+    ].filter((candidate) => !spreadPair || candidate.axis === spreadPair.axis);
     const move = rawMoves
       .map((candidate, order) => ({
         ...candidate,
@@ -1067,11 +1104,16 @@ function alignmentBendAdvisories() {
     const suggestedPos = [Math.round(move.pos[0]), Math.round(move.pos[1])];
     // Inferred sides follow the aligned geometry automatically; authored
     // sides that point across the shared axis must be updated with the move.
+    // A spread pair's slots co-order onto the shared axis, straightening every
+    // edge between the two nodes at once.
     const sidesClause = authoredSides && !sidesMatch
       ? ` and set fromSide/toSide to "${facing.fromSide}"/"${facing.toSide}"`
       : '';
+    const pairClause = spreadPair
+      ? ` so both spread edges between "${from.id}" and "${to.id}" run as parallel straight segments`
+      : '';
     const relationId = conn.id ? ` id "${conn.id}"` : '';
-    const message = `[layout/alignable-bend] architecture connections[${index}]${relationId} "${conn.from}" -> "${conn.to}" has ${bends} removable bend${bends === 1 ? '' : 's'} — move "${move.mover.id}" pos to [${suggestedPos[0]}, ${suggestedPos[1]}] ${relativeWord} "${other.id}"${sidesClause}, then re-validate.`;
+    const message = `[layout/alignable-bend] architecture connections[${index}]${relationId} "${conn.from}" -> "${conn.to}" has ${bends} removable bend${bends === 1 ? '' : 's'} — move "${move.mover.id}" pos to [${suggestedPos[0]}, ${suggestedPos[1]}] ${relativeWord} "${other.id}"${sidesClause}${pairClause}, then re-validate.`;
     advisories.push({
       code: 'layout/alignable-bend',
       severity: 'warning',
@@ -1093,6 +1135,7 @@ function alignmentBendAdvisories() {
         toSide: currentToSide,
         suggestedFromSide: facing.fromSide,
         suggestedToSide: facing.toSide,
+        ...(spreadPair ? { spreadPair: true } : {}),
       },
       supportedFixes: [
         `move "${move.mover.id}" pos to [${suggestedPos[0]}, ${suggestedPos[1]}]${sidesClause} so connections[${index}] renders as one straight segment`,
