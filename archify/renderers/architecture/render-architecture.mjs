@@ -496,6 +496,35 @@ function validateArchitecture() {
       problems.push(`Boundary "${b.label}" extends outside the viewBox — its members sit too close to the canvas edge; add margin or enlarge meta.viewBox.`);
     }
   }
+  // Boundary frames may overlap only through intentional structure: one
+  // frame fully nested inside another, or boundaries sharing a wrapped
+  // component (the shared component explains the intersecting region).
+  // Anything else is a silent visual defect.
+  for (let left = 0; left < boundaries.length; left += 1) {
+    for (let right = left + 1; right < boundaries.length; right += 1) {
+      const a = boundaries[left];
+      const b = boundaries[right];
+      const overlapX = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+      const overlapY = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+      if (overlapX <= 0.0001 || overlapY <= 0.0001) continue;
+      const contains = (outer, inner) => (
+        outer.x <= inner.x + 0.0001
+        && outer.y <= inner.y + 0.0001
+        && outer.x + outer.width >= inner.x + inner.width - 0.0001
+        && outer.y + outer.height >= inner.y + inner.height - 0.0001
+      );
+      if (contains(a, b) || contains(b, a)) continue;
+      const sharesComponent = asArray(a.wraps).some((id) => asArray(b.wraps).includes(id));
+      if (sharesComponent) continue;
+      const moveHint = overlapY <= overlapX
+        ? `down by ${Math.round(overlapY + 8)}px`
+        : `right by ${Math.round(overlapX + 8)}px`;
+      problems.push(
+        `Boundary "${a.label}" and boundary "${b.label}" overlap by ${Math.round(overlapX)}×${Math.round(overlapY)}px without nesting or a shared wrapped component — `
+        + `move one group's wrapped components ${moveHint} so the frames clear each other (grow meta.viewBox if needed), or wrap the shared component in both boundaries.`,
+      );
+    }
+  }
 
   for (const conn of asArray(arch.connections)) {
     if (!components.has(conn.from)) problems.push(`Connection "${conn.label || conn.from}" references unknown source "${conn.from}".`);

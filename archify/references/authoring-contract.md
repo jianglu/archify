@@ -111,6 +111,7 @@ in the generated viewer.
 - Shared endpoint corridors are allowed only when they remain semantically unambiguous. Unrelated collinear overlap of 8px or more fails showcase.
 - Container borders are intentional pass-through geometry, but a long edge running along a structural border is not.
 - An edge crossing an unrelated opaque node is always a hard failure, independent of quality profile.
+- Boundary frames may overlap only through nesting or a shared wrapped component. Parallel groups position their members so the padded frames keep a clear gap; validation reports unexplained overlap with the measured intersection and the group move that clears it.
 
 ### Spacing and labels
 

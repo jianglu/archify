@@ -7,6 +7,7 @@ All notable changes are documented here. Format loosely follows [Keep a Changelo
 > Development identity: `v2.17.0-dev.1`. Not a stable release.
 
 ### Added
+- **Boundary frame overlap validation.** Architecture validation now rejects two boundary frames that intersect without nesting or a shared wrapped component, reporting the measured overlap and the single-axis group move (plus any needed `meta.viewBox` growth) that clears it. Fully nested frames and boundaries sharing a wrapped component remain legal; bundled examples are unaffected.
 - **Alignment advisories for removable bends.** Architecture `validate` now reports warning-level `layout/alignable-bend` advisories: for each bent automatic connection, one collision-checked single-node, single-axis move (plus the facing `fromSide`/`toSide` when authored sides point across the shared axis) that renders the connection as one straight segment. Spread-port pairs are covered too: when the two nodes' anchor axes coincide, the spread slots co-order into parallel straight segments, so a pair whose groups contain only edges between the two nodes gets one deduplicated axis-alignment advisory (cross-boundary groups included). Advisories ride a new successful-render stderr payload into `validate --json` receipts and human-mode `warning:` lines without blocking delivery, and authored positions stay authoritative. The Skill and authoring contract add the matching guidance: align same-row `cy` / same-column `cx` before adding routing controls.
 
 ### Changed

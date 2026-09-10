@@ -1325,6 +1325,73 @@ test('architecture: a misaligned spread pair gets one deduplicated axis-alignmen
   assert.match(html, /data-composition-points="467,400;467,160"/);
 });
 
+test('architecture: boundary frames may not overlap without nesting or a shared component', () => {
+  // Region A (upper-left node) and Region B (lower-right node) wrap disjoint
+  // components, but their padded frames intersect in a 30×80px band.
+  const d = {
+    schema_version: 1,
+    diagram_type: 'architecture',
+    meta: { title: 'Boundary overlap regression', quality_profile: 'showcase' },
+    components: [
+      { id: 'upper-node', type: 'backend', label: 'Upper', pos: [100, 100], size: [120, 60] },
+      { id: 'lower-node', type: 'database', label: 'Lower', pos: [250, 130], size: [120, 60] },
+    ],
+    connections: [],
+    boundaries: [
+      { kind: 'region', label: 'Region A', wraps: ['upper-node'] },
+      { kind: 'region', label: 'Region B', wraps: ['lower-node'] },
+    ],
+  };
+  const { code, stderr } = render('architecture', d);
+  assert.notEqual(code, 0, `expected non-zero exit; stderr:\n${stderr}`);
+  assert.match(stderr, /Boundary "Region A" and boundary "Region B" overlap by 30×80px without nesting or a shared wrapped component/);
+  assert.match(stderr, /move one group's wrapped components (?:down|right) by \d+px so the frames clear each other/);
+});
+
+test('architecture: overlapping boundary frames pass when the groups share a wrapped component', () => {
+  // Region A (left + mid) and Region B (mid + right) intersect around their
+  // shared mid-node without either frame nesting inside the other.
+  const d = {
+    schema_version: 1,
+    diagram_type: 'architecture',
+    meta: { title: 'Shared boundary regression', quality_profile: 'showcase' },
+    components: [
+      { id: 'left-node', type: 'backend', label: 'Left', pos: [100, 100], size: [120, 60] },
+      { id: 'mid-node', type: 'backend', label: 'Mid', pos: [400, 100], size: [120, 60] },
+      { id: 'right-node', type: 'backend', label: 'Right', pos: [700, 100], size: [120, 60] },
+    ],
+    connections: [{ id: 'flow', from: 'left-node', to: 'mid-node' }],
+    boundaries: [
+      { kind: 'region', label: 'Region A', wraps: ['left-node', 'mid-node'] },
+      { kind: 'region', label: 'Region B', wraps: ['mid-node', 'right-node'] },
+    ],
+  };
+  const { code, stderr } = render('architecture', d);
+  assert.equal(code, 0, stderr);
+});
+
+test('architecture: a fully nested boundary frame passes without a shared component', () => {
+  // Region B (mid) sits completely inside Region A (left + right): nesting
+  // alone explains the overlap.
+  const d = {
+    schema_version: 1,
+    diagram_type: 'architecture',
+    meta: { title: 'Nested boundary regression', quality_profile: 'showcase' },
+    components: [
+      { id: 'left-node', type: 'backend', label: 'Left', pos: [100, 100], size: [120, 60] },
+      { id: 'mid-node', type: 'backend', label: 'Mid', pos: [400, 100], size: [120, 60] },
+      { id: 'right-node', type: 'backend', label: 'Right', pos: [700, 100], size: [120, 60] },
+    ],
+    connections: [{ id: 'flow', from: 'left-node', to: 'mid-node' }],
+    boundaries: [
+      { kind: 'region', label: 'Region A', wraps: ['left-node', 'right-node'] },
+      { kind: 'region', label: 'Region B', wraps: ['mid-node'] },
+    ],
+  };
+  const { code, stderr } = render('architecture', d);
+  assert.equal(code, 0, stderr);
+});
+
 test('architecture: validate --json surfaces renderer alignment advisories', () => {
   const input = path.join(tmp, 'arch-adv-cli.json');
   fs.writeFileSync(input, JSON.stringify(alignmentAdvisoryFixture()));
