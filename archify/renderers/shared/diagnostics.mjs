@@ -46,6 +46,21 @@ export function withDiagnosticRecordingSuppressed(callback) {
   }
 }
 
+// Warning-level diagnostics recorded on a successful render (advisories) have
+// no failure to ride on, so successful writes flush them to stderr as one JSON
+// payload the parent CLI can fold into its receipt. Anything error-severe here
+// would mean a success path recorded a failure, which is never emitted.
+export function emitRendererAdvisories() {
+  if (!DIAGNOSTIC_MODE || !recorded.length) return;
+  if (recorded.some((entry) => entry.severity !== 'warning')) return;
+  const payload = `${JSON.stringify({ schemaVersion: 1, ok: true, source: 'renderer', diagnostics: recorded })}\n`;
+  try {
+    fs.writeSync(process.stderr.fd, payload);
+  } catch {
+    // Advisory output must never fail an otherwise successful render.
+  }
+}
+
 export function throwDiagnosticError(message, diagnostics) {
   for (const diagnostic of diagnostics || []) recordDiagnostic(diagnostic);
   const error = new Error(message);

@@ -6,6 +6,9 @@ All notable changes are documented here. Format loosely follows [Keep a Changelo
 
 > Development identity: `v2.17.0-dev.1`. Not a stable release.
 
+### Added
+- **Alignment advisories for removable bends.** Architecture `validate` now reports warning-level `layout/alignable-bend` advisories: for each bent automatic connection, one collision-checked single-node, single-axis move (plus the facing `fromSide`/`toSide` when authored sides point across the shared axis) that renders the connection as one straight segment. Advisories ride a new successful-render stderr payload into `validate --json` receipts and human-mode `warning:` lines without blocking delivery, and authored positions stay authoritative. The Skill and authoring contract add the matching guidance: align same-row `cy` / same-column `cx` before adding routing controls.
+
 ### Changed
 - **Bend-minimal automatic architecture routes.** The architecture auto router now proposes single-bend candidates before two-bend doglegs, gates every automatic candidate on the shared route-rhythm floors, and keeps the spread-port stub bridge as a fallback instead of the default shape; a new shared `simplifyRoutePoints` helper re-checks automatic routes for removable bends under the same accept predicates while authored `via` geometry stays authoritative. The rhythm floors (router and composition gates together) now exempt a short interior jog flanked by two long runs (each at least twice the interior floor), so a bidirectional pair with spread ports routes as two clean two-bend Zs instead of six-point stub bridges; dense zigzags stay flagged. Bundled example output is byte-identical; the change is locked with new geometry and layout-rules tests.
 

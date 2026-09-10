@@ -3,7 +3,7 @@ import path from 'node:path';
 import { applyTemplate, renderCards, esc } from './utils.mjs';
 import { validateSchema } from './validator.mjs';
 import { verifyRepositoryEvidence } from './repository-evidence.mjs';
-import { installRendererDiagnosticBoundary, throwDiagnosticProblems } from './diagnostics.mjs';
+import { emitRendererAdvisories, installRendererDiagnosticBoundary, throwDiagnosticProblems } from './diagnostics.mjs';
 import { validateEngineeringProfile } from './engineering-profiles.mjs';
 import { resolveOutputPath } from './output-path.mjs';
 import { prepareDiagramBrandMarks } from './brand-marks.mjs';
@@ -67,6 +67,7 @@ export function writeDiagram({ outPath, template, diagramType, meta, svg, cards,
   }));
   outputPathGuards.delete(outPath);
   console.log(outPath);
+  emitRendererAdvisories();
 }
 
 const SEMANTIC_COLLECTIONS = {

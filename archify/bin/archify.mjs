@@ -208,6 +208,23 @@ function rendererFailure(result) {
   };
 }
 
+// Successful renders may flush one advisory payload (warning-severity
+// diagnostics) to stderr; fold it into receipts without letting unrelated
+// stderr noise masquerade as advisory data.
+function rendererAdvisories(result) {
+  const stderr = String(result?.stderr || '').trim();
+  if (!stderr) return [];
+  try {
+    const payload = JSON.parse(stderr);
+    if (payload?.ok === true && payload.source === 'renderer' && Array.isArray(payload.diagnostics)) {
+      return payload.diagnostics.filter((entry) => entry && entry.severity === 'warning');
+    }
+  } catch {
+    // Advisory output is optional; ignore anything that is not the payload.
+  }
+  return [];
+}
+
 const COMPOSITION_CHECKS = new Set([
   'label_route_clearance',
   'relationship_crossings',
@@ -1997,6 +2014,7 @@ function commandValidate(args) {
       } else {
         const result = JSON.parse(check.stdout);
         const engineeringProfile = engineeringProfileFromArtifact(fs.readFileSync(out));
+        const advisories = rendererAdvisories(render);
         if (json) {
           console.log(JSON.stringify({
             schemaVersion: 1,
@@ -2006,6 +2024,7 @@ function commandValidate(args) {
             input: path.resolve(input),
             checks: result.checks,
             composition: result.composition,
+            ...(advisories.length ? { advisories } : {}),
             ...(engineeringProfile ? { engineeringProfile } : {}),
           }, null, 2));
         } else {
@@ -2013,6 +2032,9 @@ function commandValidate(args) {
             ? `; engineering ${engineeringProfile}: pass`
             : '';
           console.log(`ok ${type} ${path.resolve(input)} (${result.checks.length} artifact checks; composition ${result.composition.profile}: ${result.composition.summary.errors} errors, ${result.composition.summary.warnings} warnings${engineering})`);
+          for (const advisory of advisories) {
+            console.error(`warning: ${advisory.message}`);
+          }
         }
       }
     }

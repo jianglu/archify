@@ -12,7 +12,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -1174,6 +1174,124 @@ test('architecture: bidirectional spread pair routes as two-bend jogs instead of
   assert.match(html, /data-composition-points="453,160;453,280;463,280;463,400"/);
   assert.match(html, /data-composition-points="477,400;477,280;467,280;467,160"/);
   assert.doesNotMatch(html, /data-composition-points="453,160;453,184;479,184/);
+});
+
+function alignmentAdvisoryFixture() {
+  return {
+    schema_version: 1,
+    diagram_type: 'architecture',
+    meta: { title: 'Alignment advisory regression', quality_profile: 'showcase' },
+    components: [
+      { id: 'win', type: 'external', label: 'Win', pos: [30, 270], size: [130, 80] },
+      { id: 'snap', type: 'backend', label: 'Snap', pos: [240, 270], size: [170, 80] },
+      { id: 'rules', type: 'backend', label: 'Rules', pos: [490, 270], size: [170, 80] },
+      { id: 'infer', type: 'backend', label: 'Infer', pos: [740, 270], size: [170, 80] },
+      { id: 'clean', type: 'backend', label: 'Clean', pos: [990, 270], size: [160, 80] },
+      { id: 'quarantine', type: 'database', label: 'Quarantine', pos: [1190, 270], size: [120, 80] },
+      { id: 'archive', type: 'database', label: 'Archive', pos: [490, 90], size: [170, 80] },
+    ],
+    connections: [
+      { id: 'win-to-snap', from: 'win', to: 'snap' },
+      { id: 'snap-to-rules', from: 'snap', to: 'rules' },
+      { id: 'rules-to-infer', from: 'rules', to: 'infer' },
+      { id: 'infer-to-clean', from: 'infer', to: 'clean' },
+      { id: 'clean-to-quarantine', from: 'clean', to: 'quarantine' },
+      { id: 'snap-to-archive', from: 'snap', to: 'archive', fromSide: 'top', toSide: 'left' },
+      { id: 'archive-to-infer', from: 'archive', to: 'infer', fromSide: 'right', toSide: 'top' },
+    ],
+  };
+}
+
+function parseAdvisoryPayload(stderr) {
+  try {
+    const payload = JSON.parse(String(stderr).trim());
+    if (payload?.ok === true && payload.source === 'renderer' && Array.isArray(payload.diagnostics)) {
+      return payload.diagnostics;
+    }
+  } catch {
+    // No advisory payload on this run.
+  }
+  return [];
+}
+
+function renderWithAdvisoryPayload(doc) {
+  const name = `arch-adv-${Math.abs(hash(JSON.stringify(doc)))}`;
+  const input = path.join(tmp, `${name}.json`);
+  const outPath = path.join(tmp, `${name}.html`);
+  fs.writeFileSync(input, JSON.stringify(doc));
+  const result = spawnSync('node', [
+    path.join(skillRoot, 'renderers/architecture/render-architecture.mjs'),
+    input,
+    outPath,
+  ], { stdio: ['ignore', 'ignore', 'pipe'], encoding: 'utf8', env: { ...process.env, ARCHIFY_DIAGNOSTIC_FORMAT: 'json' } });
+  return { code: result.status ?? 1, advisories: parseAdvisoryPayload(result.stderr) };
+}
+
+test('architecture: alignment advisories name the exact move that straightens a bent connection', () => {
+  const { code, advisories } = renderWithAdvisoryPayload(alignmentAdvisoryFixture());
+  assert.equal(code, 0);
+  assert.equal(advisories.length, 2);
+  assert.ok(advisories.every((advisory) => advisory.code === 'layout/alignable-bend'));
+  assert.ok(advisories.every((advisory) => advisory.severity === 'warning'));
+
+  const snapToArchive = advisories.find((advisory) => advisory.subject.id === 'snap-to-archive');
+  assert.deepEqual(snapToArchive.evidence.suggestedPos, [240, 90]);
+  assert.equal(snapToArchive.evidence.suggestedFromSide, 'top');
+  assert.equal(snapToArchive.evidence.suggestedToSide, 'bottom');
+  assert.match(snapToArchive.message, /move "archive" pos to \[240, 90\] directly above "snap"/);
+  assert.match(snapToArchive.message, /set fromSide\/toSide to "top"\/"bottom"/);
+
+  const archiveToInfer = advisories.find((advisory) => advisory.subject.id === 'archive-to-infer');
+  assert.deepEqual(archiveToInfer.evidence.suggestedPos, [740, 90]);
+  assert.equal(archiveToInfer.evidence.suggestedToSide, 'top');
+  assert.match(archiveToInfer.supportedFixes[0], /move "archive" pos to \[740, 90\]/);
+});
+
+test('architecture: straight and spread connections produce no alignment advisory', () => {
+  const straight = renderWithAdvisoryPayload({
+    schema_version: 1,
+    diagram_type: 'architecture',
+    meta: { title: 'No advisory', quality_profile: 'showcase' },
+    components: [
+      { id: 'alpha', type: 'backend', label: 'Alpha', pos: [100, 100], size: [120, 60] },
+      { id: 'beta', type: 'database', label: 'Beta', pos: [100, 300], size: [120, 60] },
+    ],
+    connections: [{ id: 'down', from: 'alpha', to: 'beta' }],
+  });
+  assert.equal(straight.code, 0);
+  assert.deepEqual(straight.advisories, []);
+
+  // A spread bidirectional pair keeps distinct ports; alignment cannot
+  // straighten it and must not suggest moving either node.
+  const spread = renderWithAdvisoryPayload({
+    schema_version: 1,
+    diagram_type: 'architecture',
+    meta: { title: 'Spread pair advisory', quality_profile: 'showcase' },
+    components: [
+      { id: 'alpha', type: 'backend', label: 'Alpha', pos: [400, 100], size: [120, 60] },
+      { id: 'beta', type: 'database', label: 'Beta', pos: [410, 400], size: [120, 60] },
+    ],
+    connections: [
+      { id: 'down', from: 'alpha', to: 'beta', fromSide: 'bottom', toSide: 'top' },
+      { id: 'up', from: 'beta', to: 'alpha', variant: 'dashed', fromSide: 'top', toSide: 'bottom' },
+    ],
+  });
+  assert.equal(spread.code, 0);
+  assert.deepEqual(spread.advisories, []);
+});
+
+test('architecture: validate --json surfaces renderer alignment advisories', () => {
+  const input = path.join(tmp, 'arch-adv-cli.json');
+  fs.writeFileSync(input, JSON.stringify(alignmentAdvisoryFixture()));
+  const stdout = execFileSync('node', [
+    path.join(skillRoot, 'bin/archify.mjs'),
+    'validate', 'architecture', input, '--json', '--quality', 'showcase',
+  ], { stdio: ['ignore', 'pipe', 'ignore'] });
+  const receipt = JSON.parse(String(stdout));
+  assert.equal(receipt.ok, true);
+  assert.ok(Array.isArray(receipt.advisories));
+  assert.ok(receipt.advisories.every((advisory) => advisory.code === 'layout/alignable-bend'));
+  assert.ok(receipt.advisories.length >= 2);
 });
 
 test('architecture: auto route preserves inferred side normals when the primary dogleg is blocked', () => {

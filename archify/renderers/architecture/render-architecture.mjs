@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { esc, renderDefinitions, renderSemanticSigil, textUnits } from '../shared/utils.mjs';
 import { animateAttr, focusEdgeAttrs, focusNodeAttrs, focusNodeTitle, loadDiagramWithBrandMarks, writeDiagram, svgAccessibleText, svgRootAttrs } from '../shared/cli.mjs';
 import { componentBox, boundaryBox, connectionPath } from '../shared/layout-report.mjs';
-import { throwDiagnosticProblems } from '../shared/diagnostics.mjs';
+import { recordDiagnostic, throwDiagnosticProblems } from '../shared/diagnostics.mjs';
 import { legendFootprint, relationshipLegendObstacles, resolveLegend, renderLegend as renderResolvedLegend } from '../shared/legend.mjs';
 import { availableNodeTextWidth, fittedNodeFontSize, minimumNodeTextWidth } from '../shared/text-fit.mjs';
 import { brandLabelFitWidth, brandMetadataFor, brandTopRailProblem, renderBrandMark } from '../shared/brand-marks.mjs';
@@ -598,6 +598,10 @@ function validateArchitecture() {
     profile: arch.meta?.quality_profile,
   }));
 
+  // Alignment advisories are warnings, not layout failures: recorded for the
+  // repair receipt, never thrown.
+  for (const advisory of alignmentBendAdvisories()) recordDiagnostic(advisory);
+
   if (problems.length) {
     throwDiagnosticProblems('Architecture layout validation failed', problems, {
       subject: { diagramType: 'architecture' },
@@ -971,6 +975,131 @@ function pathFor(conn) {
   const routed = { d: roundedPath(points, 8), points };
   pathCache.set(conn, routed);
   return routed;
+}
+
+// ---- Alignment advisories (warning-level, never blocking) ---------------------
+// Authored positions stay authoritative; these record actionable single-node,
+// single-axis moves that put a bent automatic connection's endpoints on one
+// shared row or column, where the router draws one straight segment.
+
+const ALIGNMENT_MOVE_EPSILON = 4;
+
+function alignmentFacingSides(from, to, axis) {
+  if (axis === 'column') {
+    return from.y <= to.y
+      ? { fromSide: 'bottom', toSide: 'top' }
+      : { fromSide: 'top', toSide: 'bottom' };
+  }
+  return from.x <= to.x
+    ? { fromSide: 'right', toSide: 'left' }
+    : { fromSide: 'left', toSide: 'right' };
+}
+
+function alignmentMoveIsClear(mover, pos) {
+  const moved = { ...mover, x: pos[0], y: pos[1] };
+  if (moved.x < 0 || moved.y < 0
+    || moved.x + moved.width > viewBox[0]
+    || moved.y + moved.height > viewBox[1]) return false;
+  for (const component of components.values()) {
+    if (component === mover) continue;
+    if (rectsOverlap(moved, component, 8)) return false;
+  }
+  for (const boundary of boundaries) {
+    if (asArray(boundary.wraps).includes(mover.id)) {
+      if (moved.x < boundary.x || moved.y < boundary.y
+        || moved.x + moved.width > boundary.x + boundary.width
+        || moved.y + moved.height > boundary.y + boundary.height) return false;
+    } else if (rectsOverlap(moved, boundary, 0)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function alignmentBendAdvisories() {
+  const connections = asArray(arch.connections);
+  const advisories = [];
+  if (!connections.length) return advisories;
+  const connectionCounts = new Map();
+  for (const conn of connections) {
+    for (const id of [conn.from, conn.to]) {
+      connectionCounts.set(id, (connectionCounts.get(id) || 0) + 1);
+    }
+  }
+  for (const [index, conn] of connections.entries()) {
+    if (conn.via || (conn.route && conn.route !== 'auto')) continue;
+    if (automaticPorts.get(conn)) continue;
+    const from = components.get(conn.from);
+    const to = components.get(conn.to);
+    if (!from || !to) continue;
+    const bends = Math.max(0, pathFor(conn).points.length - 2);
+    if (bends < 1) continue;
+    // Prefer moving the endpoint with fewer relationships, then the fixed
+    // candidate order, so the suggestion is deterministic.
+    const rawMoves = [
+      { mover: to, axis: 'column', delta: from.cx - to.cx, pos: [from.cx - to.width / 2, to.y] },
+      { mover: to, axis: 'row', delta: from.cy - to.cy, pos: [to.x, from.cy - to.height / 2] },
+      { mover: from, axis: 'column', delta: to.cx - from.cx, pos: [to.cx - from.width / 2, from.y] },
+      { mover: from, axis: 'row', delta: to.cy - from.cy, pos: [from.x, to.cy - from.height / 2] },
+    ];
+    const move = rawMoves
+      .map((candidate, order) => ({
+        ...candidate,
+        order,
+        moverCount: connectionCounts.get(candidate.mover.id) || 1,
+      }))
+      .filter((candidate) => Math.abs(candidate.delta) >= ALIGNMENT_MOVE_EPSILON)
+      .sort((left, right) => left.moverCount - right.moverCount || left.order - right.order)
+      .find((candidate) => alignmentMoveIsClear(candidate.mover, candidate.pos));
+    if (!move) continue;
+    const other = move.mover === to ? from : to;
+    const facing = alignmentFacingSides(from, to, move.axis);
+    const currentFromSide = chosenSide(conn.fromSide, defaultFromSide(from, to));
+    const currentToSide = chosenSide(conn.toSide, defaultToSide(from, to));
+    const authoredSides = (
+      (conn.fromSide && conn.fromSide !== 'auto')
+      || (conn.toSide && conn.toSide !== 'auto')
+    );
+    const sidesMatch = currentFromSide === facing.fromSide && currentToSide === facing.toSide;
+    const relativeWord = move.axis === 'column'
+      ? (move.mover.y <= other.y ? 'directly above' : 'directly below')
+      : (move.mover.x <= other.x ? 'directly left of' : 'directly right of');
+    const suggestedPos = [Math.round(move.pos[0]), Math.round(move.pos[1])];
+    // Inferred sides follow the aligned geometry automatically; authored
+    // sides that point across the shared axis must be updated with the move.
+    const sidesClause = authoredSides && !sidesMatch
+      ? ` and set fromSide/toSide to "${facing.fromSide}"/"${facing.toSide}"`
+      : '';
+    const relationId = conn.id ? ` id "${conn.id}"` : '';
+    const message = `[layout/alignable-bend] architecture connections[${index}]${relationId} "${conn.from}" -> "${conn.to}" has ${bends} removable bend${bends === 1 ? '' : 's'} — move "${move.mover.id}" pos to [${suggestedPos[0]}, ${suggestedPos[1]}] ${relativeWord} "${other.id}"${sidesClause}, then re-validate.`;
+    advisories.push({
+      code: 'layout/alignable-bend',
+      severity: 'warning',
+      message,
+      subject: {
+        diagramType: 'architecture',
+        collection: 'connections',
+        index,
+        from: conn.from,
+        to: conn.to,
+        ...(conn.id ? { id: conn.id } : {}),
+      },
+      evidence: {
+        currentBends: bends,
+        axis: move.axis,
+        deltaPx: Math.round(Math.abs(move.delta)),
+        suggestedPos,
+        fromSide: currentFromSide,
+        toSide: currentToSide,
+        suggestedFromSide: facing.fromSide,
+        suggestedToSide: facing.toSide,
+      },
+      supportedFixes: [
+        `move "${move.mover.id}" pos to [${suggestedPos[0]}, ${suggestedPos[1]}]${sidesClause} so connections[${index}] renders as one straight segment`,
+      ],
+    });
+  }
+  return advisories;
 }
 
 // ---- Rendering ---------------------------------------------------------------
