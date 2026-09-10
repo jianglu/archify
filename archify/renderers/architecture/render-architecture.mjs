@@ -1085,7 +1085,10 @@ function pathFor(conn) {
 // single-axis moves that put a bent automatic connection's endpoints on one
 // shared row or column, where the router draws one straight segment.
 
-const ALIGNMENT_MOVE_EPSILON = 4;
+// Any real centerline drift qualifies: a sub-4px facing-port miss still bends
+// (the straight-line shortcut cannot honor endpoint sides across a non-axis
+// line), so the advisory floor is rounding noise, not "reads as straight".
+const ALIGNMENT_MOVE_EPSILON = 1;
 
 function alignmentFacingSides(from, to, axis) {
   if (axis === 'column') {
@@ -1215,8 +1218,11 @@ function alignmentBendAdvisories() {
     const pairClause = spreadPair
       ? ` so both spread edges between "${from.id}" and "${to.id}" run as parallel straight segments`
       : '';
+    const centerlineClause = move.axis === 'row'
+      ? `, aligning both centerlines on y=${Math.round(other.cy)}`
+      : `, aligning both centerlines on x=${Math.round(other.cx)}`;
     const relationId = conn.id ? ` id "${conn.id}"` : '';
-    const message = `[layout/alignable-bend] architecture connections[${index}]${relationId} "${conn.from}" -> "${conn.to}" has ${bends} removable bend${bends === 1 ? '' : 's'} — move "${move.mover.id}" pos to [${suggestedPos[0]}, ${suggestedPos[1]}] ${relativeWord} "${other.id}"${sidesClause}${pairClause}, then re-validate.`;
+    const message = `[layout/alignable-bend] architecture connections[${index}]${relationId} "${conn.from}" -> "${conn.to}" has ${bends} removable bend${bends === 1 ? '' : 's'} — move "${move.mover.id}" pos to [${suggestedPos[0]}, ${suggestedPos[1]}] ${relativeWord} "${other.id}"${sidesClause}${centerlineClause}${pairClause}, then re-validate.`;
     advisories.push({
       code: 'layout/alignable-bend',
       severity: 'warning',

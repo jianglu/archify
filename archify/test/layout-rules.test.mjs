@@ -1180,6 +1180,42 @@ test('architecture: narrow facing channel with a 2px port offset routes as a mic
   assert.doesNotMatch(html, /data-composition-points="430,171;406,171;/);
 });
 
+test('architecture: a 2px centerline drift still names the exact centerline alignment', () => {
+  const driftFixture = () => ({
+    schema_version: 1,
+    diagram_type: 'architecture',
+    meta: { title: 'Centerline drift advisory', quality_profile: 'showcase' },
+    components: [
+      { id: 'kvm', type: 'backend', label: 'WebRTC KVM', pos: [250, 140], size: [150, 66] },
+      // Same top edge as kvm but 4px shorter: centerlines differ by 2px.
+      { id: 'capture', type: 'backend', label: 'Capture', pos: [430, 140], size: [150, 62] },
+    ],
+    connections: [
+      { id: 'encoded-frames', from: 'capture', to: 'kvm', labelAt: [415, 125] },
+    ],
+  });
+  const { code, advisories } = renderWithAdvisoryPayload(driftFixture());
+  assert.equal(code, 0);
+  assert.equal(advisories.length, 1);
+  const advisory = advisories[0];
+  assert.equal(advisory.code, 'layout/alignable-bend');
+  assert.equal(advisory.evidence.deltaPx, 2);
+  // Both endpoints have one relationship here, so the deterministic
+  // candidate order moves kvm onto capture's centerline (y=171).
+  assert.deepEqual(advisory.evidence.suggestedPos, [250, 138]);
+  assert.match(advisory.message, /move "kvm" pos to \[250, 138\] directly left of "capture"/);
+  assert.match(advisory.message, /aligning both centerlines on y=171/);
+  // Applying the move (kvm center 138 + 33 = 171 = capture center) removes
+  // the bends even though the authored labelAt keeps port auto-alignment off.
+  const applied = driftFixture();
+  applied.components[0].pos = [250, 138];
+  const straightened = renderWithAdvisoryPayload(applied);
+  assert.equal(straightened.code, 0);
+  assert.deepEqual(straightened.advisories, []);
+  const appliedHtml = fs.readFileSync(straightened.outPath, 'utf8');
+  assert.match(appliedHtml, /data-composition-points="430,171;400,171"/);
+});
+
 test('architecture: bidirectional spread pair routes as two-bend jogs instead of stub bridges', () => {
   const d = {
     schema_version: 1,
