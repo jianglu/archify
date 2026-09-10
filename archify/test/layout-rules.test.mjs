@@ -1392,6 +1392,63 @@ test('architecture: a fully nested boundary frame passes without a shared compon
   assert.equal(code, 0, stderr);
 });
 
+const renderedFrameRects = (html) => [...html.matchAll(/data-composition-frame-label="([^"]*)"[^>]*x="([0-9.]+)" y="([0-9.]+)" width="([0-9.]+)" height="([0-9.]+)"/g)]
+  .map((m) => ({ label: m[1], x: +m[2], y: +m[3], w: +m[4], h: +m[5] }));
+
+test('architecture: a nested boundary frame keeps visible clearance from its wrapping frame', () => {
+  // The security-group wraps only the region's bottom-right member, so both
+  // frames derive the same bottom and right edges before the clearance pass.
+  const d = {
+    schema_version: 1,
+    diagram_type: 'architecture',
+    meta: { title: 'Nested clearance regression', quality_profile: 'showcase' },
+    components: [
+      { id: 'upper-node', type: 'backend', label: 'Upper', pos: [100, 100], size: [120, 60] },
+      { id: 'lower-node', type: 'database', label: 'Lower', pos: [300, 300], size: [120, 60] },
+    ],
+    connections: [],
+    boundaries: [
+      { kind: 'region', label: 'Region', wraps: ['upper-node', 'lower-node'] },
+      { kind: 'security-group', label: 'Scope', wraps: ['lower-node'] },
+    ],
+  };
+  const { code, stderr, outPath } = render('architecture', d);
+  assert.equal(code, 0, stderr);
+  const frames = renderedFrameRects(fs.readFileSync(outPath, 'utf8'));
+  const region = frames.find((frame) => frame.label === 'Region');
+  const scope = frames.find((frame) => frame.label === 'Scope');
+  assert.equal(region.y + region.h - (scope.y + scope.h), 12);
+  assert.equal(region.x + region.w - (scope.x + scope.w), 12);
+  // The inset never cuts into the wrapped member.
+  assert.ok(scope.y + scope.h >= 300 + 60);
+});
+
+test('architecture: equal-membership boundaries keep clearance through authored pad', () => {
+  // Region and security-group wrap the same node; the smaller pad nests the
+  // security-group visually and both bottom edges derive from the same
+  // member, so the clearance pass separates them.
+  const d = {
+    schema_version: 1,
+    diagram_type: 'architecture',
+    meta: { title: 'Equal-wrap clearance regression', quality_profile: 'showcase' },
+    components: [
+      { id: 'core-node', type: 'database', label: 'Core', pos: [300, 200], size: [140, 70] },
+    ],
+    connections: [],
+    boundaries: [
+      { kind: 'region', label: 'Region', wraps: ['core-node'] },
+      { kind: 'security-group', label: 'Scope', wraps: ['core-node'], pad: 14 },
+    ],
+  };
+  const { code, stderr, outPath } = render('architecture', d);
+  assert.equal(code, 0, stderr);
+  const frames = renderedFrameRects(fs.readFileSync(outPath, 'utf8'));
+  const region = frames.find((frame) => frame.label === 'Region');
+  const scope = frames.find((frame) => frame.label === 'Scope');
+  assert.equal(region.y + region.h - (scope.y + scope.h), 12);
+  assert.ok(scope.y + scope.h >= 200 + 70);
+});
+
 test('architecture: validate --json surfaces renderer alignment advisories', () => {
   const input = path.join(tmp, 'arch-adv-cli.json');
   fs.writeFileSync(input, JSON.stringify(alignmentAdvisoryFixture()));

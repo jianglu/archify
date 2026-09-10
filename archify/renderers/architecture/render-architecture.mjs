@@ -279,6 +279,72 @@ function layoutBoundaryTitles(rawBoundaries, minimumFontSize) {
 }
 
 const rawBoundaries = asArray(arch.boundaries).map(boundaryRect).filter(Boolean);
+
+// Nested boundary frames pad independently, so when the inner group's member
+// is the outer group's extreme on an axis, both frames derive the same edge
+// and their borders draw as one line. Keep a visible clearance between a
+// membership-nested frame and its tightest wrapping frame on the bottom and
+// side edges, never cutting into members. The top edge stays where the pads
+// put it: titled diagrams have no room above the label rail, and dropping an
+// untitled top can land the border on an existing route. Equal-membership
+// boundaries (visual nesting through authored `pad`) follow the same rule
+// once one frame geometrically contains the other; edges already outside
+// their wrapper stay for validation to diagnose.
+const NESTED_FRAME_CLEARANCE = 12;
+
+function applyNestedFrameClearance(frames) {
+  for (const inner of frames) {
+    const outer = frames
+      .filter((candidate) => (
+        candidate !== inner
+        && asArray(inner.wraps).length > 0
+        && asArray(inner.wraps).every((id) => asArray(candidate.wraps).includes(id))
+        && rectContains(candidate, inner)
+      ))
+      .sort((left, right) => (
+        (left.width * left.height) - (right.width * right.height)
+        || frames.indexOf(left) - frames.indexOf(right)
+      ))[0];
+    if (!outer) continue;
+    const members = asArray(inner.wraps).map((id) => components.get(id)).filter(Boolean);
+    if (!members.length) continue;
+    const memberBottom = Math.max(...members.map((m) => m.y + m.height));
+    const memberLeft = Math.min(...members.map((m) => m.x));
+    const memberRight = Math.max(...members.map((m) => m.x + m.width));
+    let { x, y, width, height } = inner;
+    const insetBottom = () => {
+      const gap = (outer.y + outer.height) - (y + height);
+      if (gap < 0 || gap >= NESTED_FRAME_CLEARANCE) return;
+      const desired = outer.y + outer.height - NESTED_FRAME_CLEARANCE;
+      if (desired < memberBottom + 2) return;
+      height = desired - y;
+    };
+    const insetLeft = () => {
+      const gap = x - outer.x;
+      if (gap < 0 || gap >= NESTED_FRAME_CLEARANCE) return;
+      const desired = outer.x + NESTED_FRAME_CLEARANCE;
+      if (desired > memberLeft - 2) return;
+      width -= desired - x;
+      x = desired;
+    };
+    const insetRight = () => {
+      const gap = (outer.x + outer.width) - (x + width);
+      if (gap < 0 || gap >= NESTED_FRAME_CLEARANCE) return;
+      const desired = outer.x + outer.width - NESTED_FRAME_CLEARANCE;
+      if (desired < memberRight + 2) return;
+      width = desired - x;
+    };
+    insetBottom();
+    insetLeft();
+    insetRight();
+    inner.x = x;
+    inner.y = y;
+    inner.width = width;
+    inner.height = height;
+  }
+  return frames;
+}
+applyNestedFrameClearance(rawBoundaries);
 function resolveBoundaryTitles() {
   if (!enforcesBoundaryTitleComposition || rawBoundaries.length === 0) {
     return {

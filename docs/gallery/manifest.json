@@ -127,8 +127,8 @@
       "engineeringProfile": "deployment-ownership",
       "nodeCount": 12,
       "edgeCount": 12,
-      "artifactBytes": 819731,
-      "artifactSha256": "dccd530553b06c10397cf00a23c8f2a04e2bb25548c6d0c29ae912ed0d5a05fe",
+      "artifactBytes": 819730,
+      "artifactSha256": "a183f6215a6c2e67b6262084186d6cb4515c273ceb2b3d69063688cf00e95180",
       "sourceBytes": 5476,
       "sourceSha256": "ec484aa8576664fdb207b543fa49486b23273faccb7a5071e1a0becfb48c22eb",
       "checks": [
