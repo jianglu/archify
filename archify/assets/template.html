@@ -6297,8 +6297,15 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
             "svg[data-preset=\"blueprint\"][data-share-reach] [data-share-reach-origin], svg[data-preset=\"blueprint\"][data-share-reach] [data-edge-from][data-share-reach-match] { filter: none; }\n";
         }
 
-        clone.insertBefore(style, clone.firstChild);
-        clone.insertBefore(bgRect, style.nextSibling);
+        // background: 'transparent' skips the background rect entirely so
+        // raster exports keep true alpha behind the diagram. Any other value
+        // (default) keeps the opaque var(--bg) plate.
+        if (opts.background !== 'transparent') {
+          clone.insertBefore(style, clone.firstChild);
+          clone.insertBefore(bgRect, style.nextSibling);
+        } else {
+          clone.insertBefore(style, clone.firstChild);
+        }
 
         return {
           svgString: new XMLSerializer().serializeToString(clone),
@@ -6368,6 +6375,86 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
               canvas.toBlob(function (blob) {
                 if (!blob) reject(exportError('viewer.export.error.toBlobNull', { label: format }));
                 else resolve(blob);
+              }, mime, quality);
+            } catch (error) {
+              URL.revokeObjectURL(svgUrl);
+              reject(error);
+            }
+          };
+          img.onerror = function (e) {
+            URL.revokeObjectURL(svgUrl);
+            reject(e);
+          };
+          img.src = svgUrl;
+        });
+      }
+
+      // Headless-friendly raster export: serializes the diagram SVG and
+      // rasterizes it on a canvas, resolving to a data URL instead of
+      // triggering a download. Used by the CLI PNG export via CDP
+      // (Runtime.evaluate + awaitPromise), and reusable by any embedded host.
+      //
+      // options:
+      //   format      'png' (default) | 'webp' | 'jpeg'
+      //   transparent true → alpha background (ignored for jpeg)
+      //   scale       integer multiplier; default and ceiling come from
+      //               pickSafeScale so the canvas never exceeds the
+      //               MAX_CANVAS_PIXELS budget.
+      // Resolves { dataUrl, width, height, scale, format, transparent, theme }.
+      function rasterizeToDataUrl(options) {
+        options = options || {};
+        var format = options.format === 'webp' || options.format === 'jpeg' ? options.format : 'png';
+        var transparent = options.transparent === true && format !== 'jpeg';
+        var svg = document.querySelector('.diagram-container svg');
+        if (!svg || !svg.viewBox || !svg.viewBox.baseVal) {
+          return Promise.reject(exportError('viewer.export.error.svgUnavailable', {}));
+        }
+        var vb = svg.viewBox.baseVal;
+        var cap = pickSafeScale(vb.width, vb.height);
+        var requested = Math.floor(Number(options.scale) || 0);
+        var scale = requested > 0 ? Math.max(1, Math.min(requested, cap)) : cap;
+        var data = serializeSvg(scale, transparent ? { background: 'transparent' } : undefined);
+        var svgBlob = new Blob([data.svgString], { type: 'image/svg+xml;charset=utf-8' });
+        var svgUrl = URL.createObjectURL(svgBlob);
+
+        return new Promise(function (resolve, reject) {
+          var img = new Image();
+          img.onload = function () {
+            try {
+              var canvas = document.createElement('canvas');
+              canvas.width = data.width;
+              canvas.height = data.height;
+              var ctx = canvas2dOrThrow(canvas, format);
+              if (format === 'jpeg') {
+                ctx.fillStyle = currentBg();
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+              }
+              ctx.drawImage(img, 0, 0);
+              URL.revokeObjectURL(svgUrl);
+              var mime = format === 'jpeg' ? 'image/jpeg' :
+                         format === 'webp' ? 'image/webp' : 'image/png';
+              var quality = format === 'png' ? undefined : 0.95;
+              canvas.toBlob(function (blob) {
+                if (!blob) {
+                  reject(exportError('viewer.export.error.toBlobNull', { label: format }));
+                  return;
+                }
+                var reader = new FileReader();
+                reader.onload = function () {
+                  resolve({
+                    dataUrl: String(reader.result),
+                    width: data.width,
+                    height: data.height,
+                    scale: scale,
+                    format: format,
+                    transparent: transparent,
+                    theme: document.documentElement.getAttribute('data-theme') || ''
+                  });
+                };
+                reader.onerror = function () {
+                  reject(exportError('viewer.export.error.toBlobNull', { label: format }));
+                };
+                reader.readAsDataURL(blob);
               }, mime, quality);
             } catch (error) {
               URL.revokeObjectURL(svgUrl);
@@ -7170,7 +7257,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         downloadReachShareCard: runReachShareCard,
         syncRouteShare: syncRouteShareItem,
         syncReachShare: syncReachShareItem,
-        copyShareCard: runCopyShareCard
+        copyShareCard: runCopyShareCard,
+        renderRaster: rasterizeToDataUrl
       };
 
       // Auto-open on page load for demo/screenshot purposes: ?openExport=1

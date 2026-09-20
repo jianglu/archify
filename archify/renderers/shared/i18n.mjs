@@ -188,6 +188,7 @@ const MESSAGE_PAIRS = {
   'viewer.export.error.contextUnavailable': ['2D canvas context unavailable for {label}', '无法为{label}创建二维画布上下文'],
   'viewer.export.error.toBlobUnavailable': ['canvas.toBlob unavailable for {label}', '{label}无法使用 canvas.toBlob'],
   'viewer.export.error.toBlobNull': ['canvas.toBlob returned no data for {label}', '{label}的 canvas.toBlob 未返回数据'],
+  'viewer.export.error.svgUnavailable': ['Diagram SVG is not ready for export', '图表 SVG 尚未就绪，无法导出'],
   'viewer.export.error.variantsCombined': ['Share Card variants cannot be combined', '无法同时组合多种分享卡片类型'],
   'viewer.export.error.viewerState': ['Share Card export could not remove temporary viewer state', '分享卡片导出无法移除临时 Viewer 状态'],
   'viewer.export.error.routeState': ['Route Card export could not preserve the resolved route safely', '路径卡片导出无法安全保留已解析路径'],

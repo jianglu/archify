@@ -23,6 +23,7 @@ function usage() {
   archify inspect <type> <input.json>
   archify check <output.html>
   archify visual-check <output.html> [--json]
+  archify png <type> <input.json> [output.png] [--theme light|dark] [--background transparent|opaque] [--scale 1-8] [--quality standard|showcase] [--repo-root path (architecture only)] [--json]
   archify guide [scenario or question] [--json] [--lang en|zh]
   archify brands [name, alias, domain, or category] [--json]
   archify brands capture <url> [--json]
@@ -1300,6 +1301,149 @@ async function commandVisualCheck(args) {
   process.exitCode = result.exitCode;
 }
 
+function extractValuedOptions(args, spec) {
+  const rest = [];
+  const picked = {};
+  const flags = [...spec.keys()];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    const flag = flags.find((candidate) => arg === candidate || arg.startsWith(`${candidate}=`));
+    if (!flag) {
+      rest.push(arg);
+      continue;
+    }
+    let value;
+    if (arg === flag) {
+      value = args[index + 1];
+      index += 1;
+    } else {
+      value = arg.slice(flag.length + 1);
+    }
+    const allowed = spec.get(flag).allowed;
+    if (!value || value.startsWith('--')) {
+      rejectCliArgument(`${flag} requires a value.`, {
+        code: 'cli/missing-option-value',
+        subject: { option: flag },
+        supportedFixes: [`provide one of: ${allowed.join(', ')}`],
+      });
+    }
+    if (!allowed.includes(value)) {
+      rejectCliArgument(`Unknown ${flag} value "${value}".`, {
+        code: 'cli/invalid-option-value',
+        subject: { option: flag },
+        evidence: { value, supportedValues: allowed },
+        supportedFixes: [`use one of: ${allowed.join(', ')}`],
+      });
+    }
+    picked[spec.get(flag).name] = value;
+  }
+  return { rest, picked };
+}
+
+function defaultPngOutputPath(inputPath, theme, transparent) {
+  const parsed = path.parse(inputPath);
+  const suffix = `.${theme}${transparent ? '.transparent' : ''}.png`;
+  return path.join(parsed.dir, `${parsed.name}${suffix}`);
+}
+
+async function commandPng(args) {
+  const qualityArgs = extractQualityArgs(args);
+  const repoArgs = extractRepoRootArgs(qualityArgs.rest);
+  const { rest, picked } = extractValuedOptions(repoArgs.rest, new Map([
+    ['--theme', { name: 'theme', allowed: ['light', 'dark'] }],
+    ['--background', { name: 'background', allowed: ['opaque', 'transparent'] }],
+    ['--scale', { name: 'scale', allowed: ['1', '2', '3', '4', '5', '6', '7', '8'] }],
+  ]));
+  const json = rest.includes('--json');
+  const transparent = picked.background
+    ? picked.background === 'transparent'
+    : rest.includes('--transparent');
+  if (picked.background && rest.includes('--transparent')) {
+    rejectCliArgument('--transparent cannot be combined with --background.', {
+      code: 'cli/conflicting-option',
+      subject: { option: '--transparent' },
+      supportedFixes: ['drop --transparent and pass --background transparent, or drop --background'],
+    });
+  }
+  const knownBooleans = new Set(['--json', '--transparent']);
+  const unknown = rest.filter((arg) => arg.startsWith('--') && !knownBooleans.has(arg));
+  if (unknown.length) {
+    rejectCliArgument(`Unknown png option "${unknown[0]}".`, {
+      code: 'cli/unknown-option',
+      subject: { option: unknown[0] },
+      supportedFixes: ['remove the unknown option and retry'],
+    });
+  }
+  const positional = rest.filter((arg) => !knownBooleans.has(arg));
+  const [type, input, outputArg] = positional;
+  if (!type || !input || positional.length > 3) fail(usage());
+  assertEvidenceType(type, repoArgs.repoRoot);
+  const theme = picked.theme || 'dark';
+  const scale = picked.scale ? Number(picked.scale) : undefined;
+  const inputPath = path.resolve(input);
+  const outputPath = path.resolve(outputArg || defaultPngOutputPath(inputPath, theme, transparent));
+
+  const staging = fs.mkdtempSync(path.join(os.tmpdir(), 'archify-png-'));
+  try {
+    const artifactPath = path.join(staging, 'artifact.html');
+    const result = runNode([rendererPath(type), input, artifactPath], {
+      env: rendererEnv(qualityArgs.quality, repoArgs.repoRoot),
+      stdio: 'pipe',
+    });
+    if (result.status !== 0) {
+      const detail = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
+      reportArtifactFailure({
+        command: 'png',
+        json,
+        stage: 'render',
+        type,
+        input: inputPath,
+        output: outputPath,
+        error: detail || `Renderer exited with code ${result.status}.`,
+        status: result.status ?? 1,
+      });
+      return;
+    }
+
+    let runExportPng;
+    try {
+      ({ runExportPng } = await import('./export-png.mjs'));
+    } catch (error) {
+      fail(`Could not load PNG export: ${error.message}`, 1);
+    }
+    const exported = await runExportPng({ artifactPath, outputPath, theme, transparent, scale });
+    if (json) {
+      console.log(JSON.stringify({
+        schemaVersion: 1,
+        ok: true,
+        command: 'png',
+        type,
+        input: inputPath,
+        ...exported,
+      }, null, 2));
+    } else {
+      console.log(`wrote ${exported.outputPath} (${exported.width}x${exported.height}, ${exported.bytes} bytes, theme ${exported.theme}${exported.transparent ? ', transparent' : ', opaque'}, ${exported.scale}x)`);
+    }
+  } catch (error) {
+    if (json) {
+      reportArtifactFailure({
+        command: 'png',
+        json: true,
+        stage: 'export',
+        type,
+        input: inputPath,
+        output: outputPath,
+        error: error.message,
+      });
+    } else {
+      console.error(`png export failed: ${error.message}`);
+      process.exitCode = 1;
+    }
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true });
+  }
+}
+
 function commandExamples() {
   const result = runNode([path.join(skillRoot, 'scripts/render-examples.mjs')], { cwd: skillRoot });
   if (result.status !== 0) exitFrom(result);
@@ -2084,6 +2228,9 @@ try {
       break;
     case 'visual-check':
       await commandVisualCheck(args);
+      break;
+    case 'png':
+      await commandPng(args);
       break;
     case 'guide':
       await commandGuide(args);

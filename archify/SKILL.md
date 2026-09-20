@@ -117,6 +117,26 @@ node bin/archify.mjs preview <type> <input>.json <output>.html --quality showcas
 
 Never start preview by default. Read `references/delivery-contract.md` when using preview, repository evidence, export receipts, visual review, or post-commit opening.
 
+## Direct PNG export
+
+When the user needs a raster image of the diagram (README, slides, chat, issue), export PNG directly with the `png` subcommand:
+
+```bash
+node bin/archify.mjs png <type> <input>.json [output.png] [--theme light|dark] [--background transparent|opaque] [--scale 1-8] [--quality standard|showcase] [--repo-root path (architecture only)] [--json]
+```
+
+- `--theme` (default `dark`) picks the rendered theme; light and dark are separate renders, not a CSS media query.
+- `--background transparent` drops the background plate so the PNG carries real alpha; default is opaque. `--transparent` is a shorthand for `--background transparent`.
+- `--scale` is the raster multiplier; the default (4, auto-reduced for very large diagrams) matches the in-viewer export. Reuse the delivered HTML when it already matches the spec — pass the artifact through `png`'s input slot only when re-rendering from JSON is intended.
+- Requires Chrome/Chromium (`ARCHIFY_CHROME` overrides discovery). The command re-renders the input JSON to a private staging artifact, rasterizes it in headless Chrome via the artifact's own export pipeline, and verifies the PNG signature before writing.
+- With `--json`, the receipt reports `width`/`height`/`scale`/`bytes`/`theme`/`transparent` in addition to the standard fields.
+
+Example:
+
+```bash
+node bin/archify.mjs png architecture <input>.json hero.png --theme light --background transparent --scale 2
+```
+
 ## Optional viewer capabilities
 
 Generated HTML already contains theme switching, pan/zoom, search, focus, relationship tracing, semantic views, presentation, and truthful exports. These are reader capabilities, not extra authoring work. `meta.animation: "trace"` is opt-in; `meta.views` is optional and should contain at most five curated chapters.
