@@ -12,7 +12,7 @@ const repoRoot = path.resolve(skillRoot, '..');
 const cursorCommand = 'npx -y skills add tt-a1i/archify --skill archify --agent cursor --global --copy --yes';
 
 test('Cursor onboarding stays explicit, bilingual, and backed by the same Skill', () => {
-  const english = fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8');
+  const english = fs.readFileSync(path.join(repoRoot, 'README-OLD.md'), 'utf8');
   const englishMirror = fs.readFileSync(path.join(repoRoot, 'README_EN.md'), 'utf8');
   const chinese = fs.readFileSync(path.join(repoRoot, 'README_ZH.md'), 'utf8');
   const start = fs.readFileSync(path.join(repoRoot, 'docs', 'start.html'), 'utf8');

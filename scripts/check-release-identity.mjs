@@ -246,16 +246,19 @@ if (hasSupportedVersion) {
     fail(`archify/assets/template.html generator must be archify ${version}; found ${generatorVersions.join(', ') || '(missing)'}.`);
   }
 
-  const english = read('README.md');
+  // README.md is the lightweight quick start; the full documentation trio
+  // (README-OLD.md / README_EN.md / README_ZH.md) carries the release
+  // identity badges and the Raven manual-ZIP boundary.
+  const english = read('README-OLD.md');
   const englishMirror = read('README_EN.md');
   const chinese = read('README_ZH.md');
-  checkReadme('README.md', english, version, 'en', isDevelopment);
+  checkReadme('README-OLD.md', english, version, 'en', isDevelopment);
   checkReadme('README_EN.md', englishMirror, version, 'en', isDevelopment);
   checkReadme('README_ZH.md', chinese, version, 'zh', isDevelopment);
-  checkRavenBoundary('README.md', english, 'en');
+  checkRavenBoundary('README-OLD.md', english, 'en');
   checkRavenBoundary('README_EN.md', englishMirror, 'en');
   checkRavenBoundary('README_ZH.md', chinese, 'zh');
-  if (english !== englishMirror) fail('README_EN.md must remain byte-identical to README.md.');
+  if (english !== englishMirror) fail('README_EN.md must remain byte-identical to README-OLD.md.');
 
   if (newestStableLabel && isDevelopment) {
     const stableMinor = newestStableLabel.split('.').slice(0, 2).join('\\.');

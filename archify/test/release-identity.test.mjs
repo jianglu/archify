@@ -84,7 +84,7 @@ function writeValidDevelopmentFixture(root, overrides = {}) {
       '## [2.12.0] — 2026-07-23',
       '',
     ].join('\n'),
-    'README.md': english,
+    'README-OLD.md': english,
     'README_EN.md': english,
     'README_ZH.md': chinese,
     'scripts/start-template.html': 'development · 开发版 · [[ARCHIFY_VERSION]]',
@@ -138,7 +138,7 @@ function writeValidStableFixture(root, overrides = {}) {
       '- Published work.',
       '',
     ].join('\n'),
-    'README.md': english,
+    'README-OLD.md': english,
     'README_EN.md': english,
     'README_ZH.md': chinese,
     'scripts/start-template.html': 'stable · 稳定版 · [[ARCHIFY_VERSION]]',
@@ -345,7 +345,7 @@ test('package, lockfile, Skill metadata, escaped Shields badge, and public docs 
       '',
       'Archify 2.12 includes unreleased capabilities.',
     ].join('\n');
-    writeFile(fixture, 'README.md', staleEnglish);
+    writeFile(fixture, 'README-OLD.md', staleEnglish);
     writeFile(fixture, 'README_EN.md', staleEnglish);
     writeFile(fixture, 'README_ZH.md', '![Version](https://img.shields.io/badge/version-2.13.0-blue)\n\nArchify 2.12 包含未发布能力。\n');
     writeFile(fixture, 'docs/index.html', '<span>Agent Skill · v2.12.0</span>');
@@ -355,7 +355,7 @@ test('package, lockfile, Skill metadata, escaped Shields badge, and public docs 
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /package-lock\.json must match 2\.13\.0-dev\.0/);
     assert.match(result.stderr, /SKILL\.md metadata version 2\.12 must map to package 2\.13\.0-dev\.0/);
-    assert.match(result.stderr, /README\.md must advertise development identity v2\.13\.0-dev\.0/);
+    assert.match(result.stderr, /README-OLD\.md must advertise development identity v2\.13\.0-dev\.0/);
     assert.match(result.stderr, /docs\/index\.html must advertise development identity v2\.13\.0-dev\.0/);
     assert.match(result.stderr, /docs\/start\.html must advertise development identity v2\.13\.0-dev\.0/);
   } finally {
@@ -427,7 +427,7 @@ test('Raven instructions reject extracting the archive into the final Skill dire
       'Raven is manual ZIP only: extract archify.zip into `~/.raven/workspace/skills/archify`; Raven is not an agent-switcher target.',
     ].join('\n');
     writeValidDevelopmentFixture(fixture, {
-      'README.md': nestedEnglish,
+      'README-OLD.md': nestedEnglish,
       'README_EN.md': nestedEnglish,
     });
 
