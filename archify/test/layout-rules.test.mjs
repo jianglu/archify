@@ -1389,6 +1389,53 @@ test('architecture: a misaligned spread pair gets one deduplicated axis-alignmen
   assert.match(html, /data-composition-points="467,400;467,160"/);
 });
 
+test('architecture: an authored canvas much larger than its content gets one underfill advisory', () => {
+  // Content pinned to the lower-center of an oversized authored canvas: the
+  // same shape as real-world figures that reserved the top band for nothing.
+  const doc = {
+    schema_version: 1,
+    diagram_type: 'architecture',
+    meta: { title: 'Underfilled canvas', quality_profile: 'showcase', viewBox: [1000, 700] },
+    components: [
+      { id: 'alpha', type: 'backend', label: 'Alpha', pos: [500, 480], size: [120, 60] },
+      { id: 'beta', type: 'database', label: 'Beta', pos: [500, 600], size: [120, 60] },
+    ],
+    connections: [{ id: 'down', from: 'alpha', to: 'beta' }],
+  };
+  const { code, advisories } = renderWithAdvisoryPayload(doc);
+  assert.equal(code, 0);
+  const underfill = advisories.filter((advisory) => advisory.code === 'layout/canvas-underfilled');
+  assert.equal(underfill.length, 1);
+  const advisory = underfill[0];
+  assert.equal(advisory.severity, 'warning');
+  assert.ok(advisory.evidence.utilizationPct < 60, `utilization ${advisory.evidence.utilizationPct}% should be far below the floor`);
+  assert.deepEqual(advisory.evidence.suggestedShift, [-480, -460]);
+  assert.ok(advisory.evidence.suggestedViewBox[0] < 1000);
+  assert.ok(advisory.evidence.suggestedViewBox[1] < 700);
+  assert.match(advisory.message, /top band \d+px.*left band \d+px empty|left band \d+px.*top band \d+px empty/);
+  assert.match(advisory.message, /shift every authored coordinate \(components pos, connections labelAt\/via\) by \[-480, -460\] and set meta\.viewBox to \[\d+, \d+\]/);
+  // Applying the advisory is a rigid translation plus a canvas shrink, so
+  // every rhythm floor and route stays intact and the advisory clears.
+  const applied = JSON.parse(JSON.stringify(doc));
+  for (const component of applied.components) {
+    component.pos = [component.pos[0] - 480, component.pos[1] - 460];
+  }
+  applied.meta.viewBox = advisory.evidence.suggestedViewBox;
+  const appliedRun = renderWithAdvisoryPayload(applied);
+  assert.equal(appliedRun.code, 0);
+  assert.deepEqual(appliedRun.advisories, []);
+});
+
+test('architecture: a content-hugging authored canvas produces no underfill advisory', () => {
+  const source = fs.readFileSync(
+    path.join(skillRoot, 'examples', 'production-deployment.architecture.json'),
+    'utf8',
+  );
+  const { code, advisories } = renderWithAdvisoryPayload(JSON.parse(source));
+  assert.equal(code, 0);
+  assert.ok(advisories.every((advisory) => advisory.code !== 'layout/canvas-underfilled'));
+});
+
 test('architecture: boundary frames may not overlap without nesting or a shared component', () => {
   // Region A (upper-left node) and Region B (lower-right node) wrap disjoint
   // components, but their padded frames intersect in a 30×80px band.

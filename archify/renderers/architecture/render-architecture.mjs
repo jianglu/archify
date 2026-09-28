@@ -697,6 +697,7 @@ function validateArchitecture() {
   // Alignment advisories are warnings, not layout failures: recorded for the
   // repair receipt, never thrown.
   for (const advisory of alignmentBendAdvisories()) recordDiagnostic(advisory);
+  for (const advisory of canvasUnderfillAdvisories()) recordDiagnostic(advisory);
 
   if (problems.length) {
     throwDiagnosticProblems('Architecture layout validation failed', problems, {
@@ -1251,6 +1252,165 @@ function alignmentBendAdvisories() {
       ],
     });
   }
+  return advisories;
+}
+
+// Canvas-underfill advisories: every viewBox check is a floor (content must
+// fit), so an authored canvas much larger than its drawn content passed
+// silently — a top band of 276px on a 620px canvas read as 45% dead space in
+// every export. Mirror the floors with a ceiling: measure the union of
+// everything drawn inside the SVG (components, boundary frames incl. title
+// rails, connection routes and label boxes) and warn when one side wastes a
+// large band or the content covers an undersized share of the canvas. The
+// suggested fix mirrors autoViewBoxFor: translate all authored coordinates by
+// one uniform offset (rigid, so every pairwise geometry and rhythm floor is
+// preserved) and shrink meta.viewBox to the auto-fit formula.
+const CANVAS_WASTE_ABSOLUTE_PX = 80;
+const CANVAS_WASTE_FRACTION = 0.25;
+const CANVAS_TARGET_ORIGIN_PX = 20;
+// The auto canvas legitimately spends layout.margin (40px) plus the legend
+// band (~28px) below the content, so a compact horizontal strip can sit near
+// 69% measured against the raw canvas — 0.7 flagged exactly such a tight,
+// healthy layout right after its coordinates were shifted into place.
+const CANVAS_UTILIZATION_FLOOR = 0.6;
+// Keep the suggestion schema-legal (architecture.schema.json viewBox minimums).
+const CANVAS_MIN_VIEWBOX_WIDTH = 320;
+const CANVAS_MIN_VIEWBOX_HEIGHT = 240;
+
+function canvasContentBounds() {
+  const rects = [];
+  for (const component of components.values()) {
+    rects.push({ x: component.x, y: component.y, width: component.width, height: component.height });
+  }
+  for (const boundary of boundaries) {
+    rects.push({ x: boundary.x, y: boundary.y, width: boundary.width, height: boundary.height });
+    if (boundary.title && Number.isFinite(boundary.title.x) && Number.isFinite(boundary.title.y)) {
+      rects.push({
+        x: boundary.title.x,
+        y: boundary.title.y,
+        width: boundary.title.width,
+        height: boundary.title.height,
+      });
+    }
+  }
+  for (const conn of asArray(arch.connections)) {
+    if (!components.has(conn.from) || !components.has(conn.to)) continue;
+    const routed = pathFor(conn);
+    for (const [px, py] of routed.points) {
+      rects.push({ x: px, y: py, width: 0, height: 0 });
+    }
+    if (conn.label) {
+      const [lx, ly] = labelPoint(conn, routed.points);
+      const width = Math.max(30, textUnits(conn.label) * 4.8 + 10);
+      rects.push({ x: lx - width / 2, y: ly - 10, width, height: 14 });
+    }
+  }
+  if (!rects.length) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const rect of rects) {
+    if (!Number.isFinite(rect.x) || !Number.isFinite(rect.y)) return null;
+    minX = Math.min(minX, rect.x);
+    minY = Math.min(minY, rect.y);
+    maxX = Math.max(maxX, rect.x + rect.width);
+    maxY = Math.max(maxY, rect.y + rect.height);
+  }
+  return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
+}
+
+function canvasUnderfillAdvisories() {
+  const advisories = [];
+  // The auto canvas hugs content by construction, so only an authored
+  // meta.viewBox can underfill.
+  if (!Array.isArray(arch.meta?.viewBox)) return advisories;
+  const [viewW, viewH] = viewBox;
+  if (!Number.isFinite(viewW) || !Number.isFinite(viewH) || viewW <= 0 || viewH <= 0) return advisories;
+  const bounds = canvasContentBounds();
+  if (!bounds) return advisories;
+  const waste = {
+    top: bounds.minY,
+    right: viewW - bounds.maxX,
+    bottom: viewH - bounds.maxY,
+    left: bounds.minX,
+  };
+  const topThreshold = Math.max(CANVAS_WASTE_ABSOLUTE_PX, viewH * CANVAS_WASTE_FRACTION);
+  const sideThreshold = Math.max(CANVAS_WASTE_ABSOLUTE_PX, viewW * CANVAS_WASTE_FRACTION);
+  const utilization = (bounds.width * bounds.height) / (viewW * viewH);
+
+  // Recommended fix: one rigid translation (dx, dy) that brings the content
+  // origin to a symmetric small margin — pairwise geometry and every rhythm
+  // floor survive a translation — then the auto-viewBox hug on the shifted
+  // bounds. Authored pos / labelAt / via coordinates all move by (dx, dy).
+  const dx = Math.round(CANVAS_TARGET_ORIGIN_PX - bounds.minX);
+  const dy = Math.round(CANVAS_TARGET_ORIGIN_PX - bounds.minY);
+  let width = Math.ceil(bounds.maxX + dx + layout.margin);
+  let footprint = legendFootprint(architectureLegendEntries, {
+    width: Math.max(1, width - layout.margin * 2),
+  });
+  if (footprint.minWidth > width - layout.margin * 2) {
+    width = Math.ceil(footprint.minWidth + layout.margin * 2);
+    footprint = legendFootprint(architectureLegendEntries, {
+      width: width - layout.margin * 2,
+    });
+  }
+  const suggested = [
+    Math.max(CANVAS_MIN_VIEWBOX_WIDTH, width),
+    Math.max(CANVAS_MIN_VIEWBOX_HEIGHT,
+      Math.ceil(bounds.maxY + dy + layout.margin + layout.legendH + footprint.extraHeight)),
+  ];
+  // When the schema-minimum canvas is already as small as the hug formula
+  // wants, no shrink is possible: leftover bands come from the canvas floor
+  // itself, and warning about them would never clear.
+  const canShrinkWidth = suggested[0] < viewW;
+  const canShrinkHeight = suggested[1] < viewH;
+  if (!canShrinkWidth && !canShrinkHeight) return advisories;
+  const firedSides = Object.entries(waste)
+    .filter(([side, value]) => {
+      const shiftable = side === 'top' || side === 'bottom' ? canShrinkHeight : canShrinkWidth;
+      const threshold = side === 'top' || side === 'bottom' ? topThreshold : sideThreshold;
+      return shiftable && value >= threshold;
+    })
+    .map(([side, value]) => ({ side, value: Math.round(value) }));
+  const utilizationAlone = !firedSides.length
+    && (canShrinkWidth || canShrinkHeight)
+    && utilization < CANVAS_UTILIZATION_FLOOR;
+  if (!firedSides.length && !utilizationAlone) return advisories;
+
+  const bandText = firedSides
+    .map(({ side, value }) => `${side} band ${value}px`)
+    .join(', ');
+  const utilizationClause = firedSides.length
+    ? ''
+    : `; spreading the same content over this canvas wastes more than ${100 - Math.round(CANVAS_UTILIZATION_FLOOR * 100)}% of the drawing area`;
+  const authoredShiftClause = dx || dy
+    ? `shift every authored coordinate (components pos, connections labelAt/via) by [${dx}, ${dy}] and `
+    : '';
+  const message = `[layout/canvas-underfilled] architecture canvas ${viewW}x${viewH} holds drawn content bounds [${Math.round(bounds.minX)}, ${Math.round(bounds.minY)} -> ${Math.round(bounds.maxX)}, ${Math.round(bounds.maxY)}] at ${Math.round(utilization * 100)}% utilization${bandText ? ` (${bandText} empty)` : ''}${utilizationClause} — ${authoredShiftClause}set meta.viewBox to [${suggested[0]}, ${suggested[1]}], then re-validate.`;
+  advisories.push({
+    code: 'layout/canvas-underfilled',
+    severity: 'warning',
+    message,
+    subject: {
+      diagramType: 'architecture',
+      collection: 'meta',
+      field: 'viewBox',
+    },
+    evidence: {
+      viewBox: [viewW, viewH],
+      contentBounds: {
+        x: Math.round(bounds.minX),
+        y: Math.round(bounds.minY),
+        width: Math.round(bounds.width),
+        height: Math.round(bounds.height),
+      },
+      utilizationPct: Math.round(utilization * 100),
+      wastePx: Object.fromEntries(Object.entries(waste).map(([side, value]) => [side, Math.round(value)])),
+      suggestedViewBox: suggested,
+      ...(dx || dy ? { suggestedShift: [dx, dy] } : {}),
+    },
+    supportedFixes: [
+      `${authoredShiftClause}set meta.viewBox to [${suggested[0]}, ${suggested[1]}] so content fills the canvas`,
+    ],
+  });
   return advisories;
 }
 

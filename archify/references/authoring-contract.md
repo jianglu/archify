@@ -112,6 +112,7 @@ in the generated viewer.
 - Container borders are intentional pass-through geometry, but a long edge running along a structural border is not.
 - An edge crossing an unrelated opaque node is always a hard failure, independent of quality profile.
 - Boundary frames may overlap only through nesting or a shared wrapped component. Parallel groups position their members so the padded frames keep a clear gap; validation reports unexplained overlap with the measured intersection and the group move that clears it.
+- The canvas hugs its drawn content. `meta.viewBox` covers everything the SVG renders: components, boundary frames and their title rails, routes, label boxes, with the legend row under the content. Do not budget canvas space for the page title or info cards — the title is page chrome and cards render as HTML below the SVG, so reserved bands stay empty in every export. Omit `meta.viewBox` for the auto-fit, or size it to the content bounds plus `40px` right margin and `40px + legend band` bottom. Architecture `validate` reports `layout/canvas-underfilled` when an authored canvas wastes a side band of 25%+ of that dimension (or spreads content over <60% of the drawing area); the advisory carries one rigid shift `[dx, dy]` for every authored coordinate (`pos`, `labelAt`, `via` — a translation preserves all pairwise geometry) plus the shrunk `meta.viewBox`; applying both clears the advisory and never disturbs rhythm or collision floors. The suggestion is schema-legal: it never drops below the viewBox minimums (320×240).
 
 ### Spacing and labels
 
